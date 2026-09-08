@@ -36,7 +36,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          base64 -d .fida-patches/0.9.1.patch.gz.b64 | gzip -d > /tmp/fida-0.9.1.patch
+          cat .fida-patches/0.9.1.part* | tr -d '\n' | base64 -d | gzip -d > /tmp/fida-0.9.1.patch
           patch -p1 < /tmp/fida-0.9.1.patch
           grep -q "versionName '0.9.1-test'" fida-field/app/build.gradle
 

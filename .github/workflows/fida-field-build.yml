@@ -82,12 +82,14 @@ jobs:
           patch -p1 < /tmp/fida-0.9.6.patch
           grep -q "versionName '0.9.6-test'" fida-field/app/build.gradle
 
-      - name: Apply Fida Field 0.9.6 resource fix
+      - name: Fix Fida Field 0.9.6 Material theme resources
         shell: bash
         run: |
           set -euo pipefail
-          cat .fida-patches/0.9.6-resource-fix.part* | tr -d '\n' | base64 -d | gzip -d > /tmp/fida-0.9.6-resource-fix.patch
-          patch -p1 < /tmp/fida-0.9.6-resource-fix.patch
+          sed -i '/<item name="colorBackground">/d; /<item name="colorOnBackground">/d' fida-field/app/src/main/res/values/themes.xml
+          sed -i '/<item name="colorBackground">/d; /<item name="colorOnBackground">/d' fida-field/app/src/main/res/values-night/themes.xml
+          ! grep -q 'name="colorBackground"' fida-field/app/src/main/res/values/themes.xml
+          ! grep -q 'name="colorBackground"' fida-field/app/src/main/res/values-night/themes.xml
 
       - name: Restore supplied Fidalix logo asset
         shell: bash

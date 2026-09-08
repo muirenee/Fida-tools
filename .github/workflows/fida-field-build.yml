@@ -6,6 +6,7 @@ on:
     paths:
       - '.fida-build/**'
       - '.fida-patches/**'
+      - '.fida-signing/**'
       - '.github/workflows/fida-field-build.yml'
   workflow_dispatch:
 
@@ -56,6 +57,21 @@ jobs:
           patch -p1 < /tmp/fida-0.9.3.patch
           grep -q "versionName '0.9.3-test'" fida-field/app/build.gradle
 
+      - name: Apply Fida Field 0.9.4 signing patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .fida-patches/0.9.4.part* | tr -d '\n' | base64 -d | gzip -d > /tmp/fida-0.9.4.patch
+          patch -p1 < /tmp/fida-0.9.4.patch
+          grep -q "versionName '0.9.4-test'" fida-field/app/build.gradle
+
+      - name: Reconstruct persistent test signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .fida-signing/fida-field-test.part* | tr -d '\n' | base64 -d > fida-field/app/fida-test.keystore
+          echo 'd407757a25505be46048d30b3b19b85a4abb9b0bf14475b2368e0f2e7e9bac51  fida-field/app/fida-test.keystore' | sha256sum -c -
+
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
@@ -86,7 +102,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Fida-Field-0.9.3-test-apk
+          name: Fida-Field-0.9.4-test-apk
           path: fida-field/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 7
           if-no-files-found: error

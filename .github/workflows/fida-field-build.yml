@@ -91,6 +91,18 @@ jobs:
           ! grep -q 'name="colorBackground"' fida-field/app/src/main/res/values/themes.xml
           ! grep -q 'name="colorBackground"' fida-field/app/src/main/res/values-night/themes.xml
 
+      - name: Apply Fida Field 0.9.7 Pro custom branding patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .fida-patches/0.9.7.part* | tr -d '\n' | base64 -d > /tmp/fida-0.9.7.patch.gz
+          echo '8ccb6ccf415df03a2367fd4e507c875fc9b05612876bcf08afb1526378455b32  /tmp/fida-0.9.7.patch.gz' | sha256sum -c -
+          gzip -d -c /tmp/fida-0.9.7.patch.gz > /tmp/fida-0.9.7.patch
+          echo '53e4cad7d114233ec93427b2aabfbb2b1212b01c376509b07c4eb01d08f09359  /tmp/fida-0.9.7.patch' | sha256sum -c -
+          patch -p1 < /tmp/fida-0.9.7.patch
+          grep -q "versionName '0.9.7-test'" fida-field/app/build.gradle
+          test -f fida-field/app/src/main/java/com/fidalix/fidafield/BrandingManager.java
+
       - name: Restore supplied Fidalix logo asset
         shell: bash
         run: |
@@ -136,7 +148,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Fida-Field-0.9.6-test-apk
+          name: Fida-Field-0.9.7-test-apk
           path: fida-field/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 7
           if-no-files-found: error

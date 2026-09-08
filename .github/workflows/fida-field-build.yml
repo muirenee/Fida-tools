@@ -5,6 +5,7 @@ on:
     branches: [ fida-field-dev ]
     paths:
       - '.fida-build/**'
+      - '.fida-patches/**'
       - '.github/workflows/fida-field-build.yml'
   workflow_dispatch:
 
@@ -30,6 +31,14 @@ jobs:
           cat .fida-build/part*.b64 | tr -d '\n' | base64 -d > fida-field-project.zip
           unzip -q fida-field-project.zip
           test -f fida-field/app/build.gradle
+
+      - name: Apply Fida Field 0.9.1 patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          base64 -d .fida-patches/0.9.1.patch.gz.b64 | gzip -d > /tmp/fida-0.9.1.patch
+          patch -p1 < /tmp/fida-0.9.1.patch
+          grep -q "versionName '0.9.1-test'" fida-field/app/build.gradle
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
@@ -61,7 +70,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Fida-Field-0.9.0-test-apk
+          name: Fida-Field-0.9.1-test-apk
           path: fida-field/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 7
           if-no-files-found: error

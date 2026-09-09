@@ -20,7 +20,7 @@ import java.util.Map;
 
 public class AppDatabase extends SQLiteOpenHelper {
     public static final String DB_NAME = "fida_field.db";
-    public static final int DB_VERSION = 4;
+    public static final int DB_VERSION = 5;
 
     public static class Row extends HashMap<String, String> {
         public long id() { try { return Long.parseLong(getOrDefault("id", "0")); } catch (Exception e) { return 0; } }
@@ -45,8 +45,8 @@ public class AppDatabase extends SQLiteOpenHelper {
         db.execSQL("CREATE TABLE technicians (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, role TEXT, phone TEXT, email TEXT, active INTEGER DEFAULT 1, created_at TEXT NOT NULL)");
         db.execSQL("CREATE TABLE sequences (year INTEGER PRIMARY KEY, seq INTEGER NOT NULL)");
         db.execSQL("CREATE TABLE sync_queue (id INTEGER PRIMARY KEY AUTOINCREMENT, entity_type TEXT NOT NULL, entity_id INTEGER NOT NULL, operation TEXT NOT NULL DEFAULT 'upsert', changed_at TEXT NOT NULL, UNIQUE(entity_type,entity_id))");
-        db.execSQL("CREATE TABLE workspace_members (id INTEGER PRIMARY KEY AUTOINCREMENT, workspace_id TEXT NOT NULL, member_uuid TEXT NOT NULL UNIQUE, name TEXT NOT NULL, email TEXT, role TEXT NOT NULL DEFAULT 'Technician', status TEXT NOT NULL DEFAULT 'Active', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)");
-        db.execSQL("CREATE TABLE workspace_invites (id INTEGER PRIMARY KEY AUTOINCREMENT, workspace_id TEXT NOT NULL, invite_uuid TEXT NOT NULL UNIQUE, email TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'Technician', status TEXT NOT NULL DEFAULT 'Pending', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)");
+        db.execSQL("CREATE TABLE workspace_members (id INTEGER PRIMARY KEY AUTOINCREMENT, workspace_id TEXT NOT NULL, member_uuid TEXT NOT NULL UNIQUE, user_uuid TEXT, name TEXT NOT NULL, email TEXT, role TEXT NOT NULL DEFAULT 'Technician', status TEXT NOT NULL DEFAULT 'Active', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)");
+        db.execSQL("CREATE TABLE workspace_invites (id INTEGER PRIMARY KEY AUTOINCREMENT, workspace_id TEXT NOT NULL, invite_uuid TEXT NOT NULL UNIQUE, email TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'Technician', status TEXT NOT NULL DEFAULT 'Pending', token TEXT, expires_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)");
         db.execSQL("CREATE TABLE sync_metadata (id INTEGER PRIMARY KEY AUTOINCREMENT, entity_type TEXT NOT NULL, entity_id INTEGER NOT NULL, remote_uuid TEXT NOT NULL UNIQUE, server_version INTEGER DEFAULT 0, last_synced_at TEXT, deleted_at TEXT, UNIQUE(entity_type,entity_id))");
         db.execSQL("CREATE INDEX idx_workspace_members_workspace ON workspace_members(workspace_id,status)");
         db.execSQL("CREATE INDEX idx_workspace_invites_workspace ON workspace_invites(workspace_id,status)");
@@ -73,6 +73,11 @@ public class AppDatabase extends SQLiteOpenHelper {
             db.execSQL("CREATE TABLE IF NOT EXISTS sync_metadata (id INTEGER PRIMARY KEY AUTOINCREMENT, entity_type TEXT NOT NULL, entity_id INTEGER NOT NULL, remote_uuid TEXT NOT NULL UNIQUE, server_version INTEGER DEFAULT 0, last_synced_at TEXT, deleted_at TEXT, UNIQUE(entity_type,entity_id))");
             db.execSQL("CREATE INDEX IF NOT EXISTS idx_workspace_members_workspace ON workspace_members(workspace_id,status)");
             db.execSQL("CREATE INDEX IF NOT EXISTS idx_workspace_invites_workspace ON workspace_invites(workspace_id,status)");
+        }
+        if(oldVersion<5){
+            db.execSQL("ALTER TABLE workspace_members ADD COLUMN user_uuid TEXT");
+            db.execSQL("ALTER TABLE workspace_invites ADD COLUMN token TEXT");
+            db.execSQL("ALTER TABLE workspace_invites ADD COLUMN expires_at TEXT");
         }
     }
 
@@ -101,6 +106,32 @@ public class AppDatabase extends SQLiteOpenHelper {
     public void cancelWorkspaceInvite(long id){ContentValues v=new ContentValues();v.put("status","Cancelled");v.put("updated_at",now());getWritableDatabase().update("workspace_invites",v,"id=?",new String[]{String.valueOf(id)});queueSync("workspace_invite",id,"upsert");}
     public String ensureRemoteUuid(String type,long entityId){Row r=one("SELECT remote_uuid FROM sync_metadata WHERE entity_type=? AND entity_id=?",new String[]{type,String.valueOf(entityId)});if(!r.s("remote_uuid").isEmpty())return r.s("remote_uuid");String uuid=java.util.UUID.randomUUID().toString();ContentValues v=new ContentValues();v.put("entity_type",type);v.put("entity_id",entityId);v.put("remote_uuid",uuid);getWritableDatabase().insertWithOnConflict("sync_metadata",null,v,SQLiteDatabase.CONFLICT_IGNORE);return one("SELECT remote_uuid FROM sync_metadata WHERE entity_type=? AND entity_id=?",new String[]{type,String.valueOf(entityId)}).s("remote_uuid");}
     public List<Row> pendingSyncRows(){return rows("SELECT q.*,m.remote_uuid,m.server_version,m.last_synced_at FROM sync_queue q LEFT JOIN sync_metadata m ON m.entity_type=q.entity_type AND m.entity_id=q.entity_id ORDER BY q.changed_at,q.id",null);}
+
+    public long pendingBusinessChanges(){return count("sync_queue","entity_type IN ('customer','site','asset','technician','job')",null);}
+    public List<Row> pendingBusinessSyncRows(){return rows("SELECT q.*,m.remote_uuid,m.server_version,m.last_synced_at FROM sync_queue q LEFT JOIN sync_metadata m ON m.entity_type=q.entity_type AND m.entity_id=q.entity_id WHERE q.entity_type IN ('customer','site','asset','technician','job') ORDER BY q.changed_at,q.id",null);}
+    public Row syncEntity(String type,long id){if("customer".equals(type))return getCustomer(id);if("site".equals(type))return getSite(id);if("asset".equals(type))return getAsset(id);if("technician".equals(type))return getTechnician(id);if("job".equals(type))return one("SELECT * FROM jobs WHERE id=?",new String[]{String.valueOf(id)});return new Row();}
+    public long localIdForRemote(String type,String remoteUuid){if(remoteUuid==null||remoteUuid.isEmpty())return 0;Row r=one("SELECT entity_id FROM sync_metadata WHERE entity_type=? AND remote_uuid=?",new String[]{type,remoteUuid});try{return Long.parseLong(r.s("entity_id"));}catch(Exception e){return 0;}}
+    public void bindRemoteUuid(String type,long localId,String remoteUuid){if(localId<=0||remoteUuid==null||remoteUuid.isEmpty())return;Row old=one("SELECT id FROM sync_metadata WHERE entity_type=? AND entity_id=?",new String[]{type,String.valueOf(localId)});ContentValues v=new ContentValues();v.put("remote_uuid",remoteUuid);v.put("last_synced_at",now());if(old.id()>0)getWritableDatabase().update("sync_metadata",v,"id=?",new String[]{String.valueOf(old.id())});else{v.put("entity_type",type);v.put("entity_id",localId);getWritableDatabase().insertOrThrow("sync_metadata",null,v);}}
+    public void markEntitySynced(String type,long localId,String remoteUuid){bindRemoteUuid(type,localId,remoteUuid);getWritableDatabase().delete("sync_queue","entity_type=? AND entity_id=?",new String[]{type,String.valueOf(localId)});}
+    public void rebindWorkspace(String oldId,String newId){if(oldId==null||newId==null||oldId.isEmpty()||newId.isEmpty()||oldId.equals(newId))return;ContentValues v=new ContentValues();v.put("workspace_id",newId);getWritableDatabase().update("workspace_members",v,"workspace_id=?",new String[]{oldId});getWritableDatabase().update("workspace_invites",v,"workspace_id=?",new String[]{oldId});}
+    public void cacheWorkspaceTeam(String workspaceId,JSONArray members,JSONArray invites)throws Exception{
+        SQLiteDatabase d=getWritableDatabase();d.beginTransaction();try{d.delete("workspace_members","workspace_id=?",new String[]{workspaceId});d.delete("workspace_invites","workspace_id=?",new String[]{workspaceId});
+            for(int i=0;i<members.length();i++){JSONObject o=members.getJSONObject(i);ContentValues v=new ContentValues();v.put("workspace_id",workspaceId);v.put("member_uuid",o.optString("member_id",java.util.UUID.randomUUID().toString()));v.put("user_uuid",o.optString("user_id",""));String name=o.optString("full_name","");String email=o.optString("email","");v.put("name",name.isEmpty()?(email.isEmpty()?"Team member":email):name);v.put("email",email);v.put("role",AccountTeamManager.normalizeRole(o.optString("role","technician")));v.put("status",AccountTeamManager.normalizeStatus(o.optString("status","active")));v.put("created_at",now());v.put("updated_at",now());d.insertOrThrow("workspace_members",null,v);}
+            for(int i=0;i<invites.length();i++){JSONObject o=invites.getJSONObject(i);ContentValues v=new ContentValues();v.put("workspace_id",workspaceId);v.put("invite_uuid",o.optString("invite_id",java.util.UUID.randomUUID().toString()));v.put("email",o.optString("email",""));v.put("role",AccountTeamManager.normalizeRole(o.optString("role","technician")));v.put("status",AccountTeamManager.normalizeStatus(o.optString("status","pending")));v.put("token",o.optString("token",""));v.put("expires_at",o.optString("expires_at",""));v.put("created_at",now());v.put("updated_at",now());d.insertOrThrow("workspace_invites",null,v);}
+            d.delete("sync_queue","entity_type IN ('workspace_member','workspace_invite')",null);d.setTransactionSuccessful();}finally{d.endTransaction();}
+    }
+    private String j(JSONObject o,String k){return o==null||o.isNull(k)?"":o.optString(k,"");}
+    private void jt(ContentValues v,JSONObject o,String... keys){for(String k:keys)v.put(k,j(o,k));}
+    private long remoteLocal(String type,JSONObject o,String key){String u=j(o,key);return u.isEmpty()?0:localIdForRemote(type,u);}
+    public long upsertRemoteEntity(String type,JSONObject o)throws Exception{
+        String remote=j(o,"id");if(remote.isEmpty())return 0;long local=localIdForRemote(type,remote);SQLiteDatabase d=getWritableDatabase();ContentValues v=new ContentValues();
+        if("customer".equals(type)){jt(v,o,"name","contact","phone","email","address","notes");if(local==0){v.put("created_at",now());local=d.insertOrThrow("customers",null,v);}else d.update("customers",v,"id=?",new String[]{String.valueOf(local)});}
+        else if("site".equals(type)){long cid=remoteLocal("customer",o,"customer_id");if(cid<=0)return 0;jt(v,o,"name","address","contact","phone","notes");v.put("customer_id",cid);if(local==0){v.put("created_at",now());local=d.insertOrThrow("sites",null,v);}else d.update("sites",v,"id=?",new String[]{String.valueOf(local)});}
+        else if("asset".equals(type)){if(local==0&&!j(o,"tag").isEmpty())local=getAssetByTag(j(o,"tag")).id();jt(v,o,"tag","name","category","make_model","serial","location","notes","next_service");long cid=remoteLocal("customer",o,"customer_id"),sid=remoteLocal("site",o,"site_id");if(cid>0)v.put("customer_id",cid);else v.putNull("customer_id");if(sid>0)v.put("site_id",sid);else v.putNull("site_id");v.put("interval_days",o.optInt("interval_days",0));if(local==0){v.put("created_at",now());local=d.insertOrThrow("assets",null,v);}else d.update("assets",v,"id=?",new String[]{String.valueOf(local)});}
+        else if("technician".equals(type)){jt(v,o,"name","role","phone","email");v.put("active",o.optBoolean("active",true)?1:0);if(local==0){v.put("created_at",now());local=d.insertOrThrow("technicians",null,v);}else d.update("technicians",v,"id=?",new String[]{String.valueOf(local)});}
+        else if("job".equals(type)){if(local==0&&!j(o,"report_no").isEmpty())local=one("SELECT * FROM jobs WHERE report_no=?",new String[]{j(o,"report_no")}).id();jt(v,o,"report_no","title","problem","diagnosis","work_done","parts","priority","status","job_date","next_service","customer_name_signed");v.put("technician",j(o,"technician_name"));long cid=remoteLocal("customer",o,"customer_id"),sid=remoteLocal("site",o,"site_id"),aid=remoteLocal("asset",o,"asset_id");if(cid>0)v.put("customer_id",cid);else v.putNull("customer_id");if(sid>0)v.put("site_id",sid);else v.putNull("site_id");if(aid>0)v.put("asset_id",aid);else v.putNull("asset_id");v.put("updated_at",now());if(local==0){v.put("created_at",now());local=d.insertOrThrow("jobs",null,v);}else d.update("jobs",v,"id=?",new String[]{String.valueOf(local)});}
+        else return 0;bindRemoteUuid(type,local,remote);d.delete("sync_queue","entity_type=? AND entity_id=?",new String[]{type,String.valueOf(local)});return local;
+    }
 
     public long count(String table, String where, String[] args) {
         Cursor c = getReadableDatabase().rawQuery("SELECT COUNT(*) FROM " + table + (where == null || where.isEmpty() ? "" : " WHERE " + where), args);

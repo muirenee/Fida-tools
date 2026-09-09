@@ -145,10 +145,25 @@ jobs:
         working-directory: fida-field
         run: gradle :app:assembleDebug --stacktrace
 
+      - name: Package reconstructed source snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f fida-field/app/fida-test.keystore
+          zip -qr Fida-Field-0.9.7-source-snapshot.zip fida-field -x 'fida-field/.gradle/*' 'fida-field/app/build/*'
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: Fida-Field-0.9.7-test-apk
           path: fida-field/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 7
+          if-no-files-found: error
+
+      - name: Upload source snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: Fida-Field-0.9.7-source-snapshot
+          path: Fida-Field-0.9.7-source-snapshot.zip
+          retention-days: 2
           if-no-files-found: error

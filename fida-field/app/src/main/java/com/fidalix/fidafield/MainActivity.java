@@ -126,6 +126,7 @@ public class MainActivity extends AppCompatActivity {
         migrateDefaultTechnician();
         registerLaunchers();
         scheduleMaintenanceReminders();
+        CloudSyncWorker.configure(this,prefs.getBoolean(CloudSyncWorker.KEY_ENABLED,true));
         buildChrome();
         showDashboard();
     }
@@ -298,7 +299,7 @@ public class MainActivity extends AppCompatActivity {
         b.addView(menuCard("Team members",accountTeam.teamSummary(),v->showTeam()));
         b.addView(menuCard("Cloud & team sync",cloudSync.backendStatus()+" • "+cloudSync.pendingChanges()+" pending",v->showCloudSync()));
         b.addView(menuCard("Company settings","Brand, technician, report numbering and theme",v->showSettings()));
-        b.addView(section("About"));b.addView(paragraph("Fida Field 0.9.10 Test\nLive Supabase account, workspace and offline-first synchronization by Fidalix."));
+        b.addView(section("About"));b.addView(paragraph("Fida Field 0.9.11 Test\nReliable Supabase sync, media, tombstones and conflict protection by Fidalix."));
     }
 
     private void showReports(){
@@ -401,10 +402,13 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void showCloudSync(){
-        setHeader("Cloud & Team Sync","Live Supabase synchronization");clear();LinearLayout b=body(page());MaterialButton back=outlineButton("← Back");back.setOnClickListener(v->showMore());b.addView(back);
+        CloudSyncWorker.configure(this,prefs.getBoolean(CloudSyncWorker.KEY_ENABLED,true));
+        setHeader("Cloud & Team Sync","Reliable offline-first Supabase synchronization");clear();LinearLayout b=body(page());MaterialButton back=outlineButton("← Back");back.setOnClickListener(v->showMore());b.addView(back);
         b.addView(section("Workspace"));b.addView(info("Workspace",accountTeam.hasWorkspace()?accountTeam.workspaceName():"Not set up"));b.addView(info("Role",accountTeam.accountRole().isEmpty()?"Local user":accountTeam.accountRole()));b.addView(info("Cloud binding",accountTeam.hasCloudWorkspace()?"Bound":"Local only"));
         b.addView(section("Supabase"));b.addView(info("Status",cloudSync.backendStatus()));b.addView(info("Account",cloudSync.accountEmail().isEmpty()?"Not signed in":cloudSync.accountEmail()));b.addView(info("Last sync",cloudSync.lastSync()));b.addView(info("Last result",cloudSync.lastResult()));
-        b.addView(section("This device"));b.addView(info("Device ID",cloudSync.deviceId()));b.addView(info("Pending business changes",String.valueOf(cloudSync.pendingChanges())));b.addView(paragraph("Fida Field pushes queued offline edits first, then downloads current workspace customers, sites, assets, technicians and jobs. A failed sync leaves unsent local changes in the queue."));
+        b.addView(section("This device"));b.addView(info("Device ID",cloudSync.deviceId()));b.addView(info("Pending changes",String.valueOf(cloudSync.pendingChanges())));b.addView(info("Protected conflicts",String.valueOf(cloudSync.conflictCount())));b.addView(info("Last background sync",prefs.getString(CloudSyncWorker.KEY_LAST_RUN,"Never")));
+        MaterialSwitch autoSync=new MaterialSwitch(this);autoSync.setText("Automatic cloud sync");autoSync.setChecked(prefs.getBoolean(CloudSyncWorker.KEY_ENABLED,true));autoSync.setOnCheckedChangeListener((button,checked)->{prefs.edit().putBoolean(CloudSyncWorker.KEY_ENABLED,checked).apply();CloudSyncWorker.configure(this,checked);toast(checked?"Automatic sync enabled":"Automatic sync disabled");});b.addView(autoSync);
+        b.addView(paragraph("Queued offline edits are pushed before cloud data is applied. If another device changes the same record while this device still has unsynced work, Fida Field protects the local edit and records a conflict instead of silently overwriting it. Cloud deletions use tombstones so they propagate safely to other devices."));
         MaterialButton sync=button("Sync now");sync.setEnabled(cloudSync.backendConfigured()&&cloudSync.signedIn()&&accountTeam.hasCloudWorkspace());sync.setOnClickListener(v->runCloud("Synchronizing workspace…",()->cloudSync.syncNow(accountTeam.workspaceId(),accountTeam.canManageTeam()),obj->{CloudSyncFoundation.SyncResult r=(CloudSyncFoundation.SyncResult)obj;refreshEntitlementsAndBranding();toast(r.message);recreate();}));b.addView(sync);
         if(!cloudSync.signedIn()||!accountTeam.hasCloudWorkspace()){b.addView(paragraph("Sign in and bind a cloud workspace under Account & Workspace before synchronization can run."));MaterialButton account=outlineButton("Open Account & Workspace");account.setOnClickListener(v->showAccountWorkspace());b.addView(account);}else{MaterialButton team=outlineButton("Refresh team only");team.setOnClickListener(v->runCloud("Refreshing team…",()->{cloudSync.refreshTeamCache(accountTeam.workspaceId(),accountTeam.canManageTeam());return null;},obj->{toast("Team refreshed");showCloudSync();}));b.addView(team);}
         MaterialButton copy=outlineButton("Copy device ID");copy.setOnClickListener(v->{android.content.ClipboardManager cm=(android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE);cm.setPrimaryClip(android.content.ClipData.newPlainText("Fida Field device ID",cloudSync.deviceId()));toast("Device ID copied");});b.addView(copy);

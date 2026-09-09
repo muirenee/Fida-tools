@@ -14,6 +14,7 @@ import java.util.UUID;
  * then current workspace records and private Storage media are synchronized. */
 public class CloudSyncFoundation {
     public static final String PROVIDER="Supabase";
+    private static final Object SYNC_LOCK=new Object();
     private final Context context;
     private final SharedPreferences prefs;
     private final AppDatabase db;
@@ -33,6 +34,7 @@ public class CloudSyncFoundation {
 
     public String deviceId(){String id=prefs.getString("cloud_device_id","");if(id==null||id.isEmpty()){id=UUID.randomUUID().toString();prefs.edit().putString("cloud_device_id",id).apply();}return id;}
     public long pendingChanges(){return db.pendingBusinessChanges();}
+    public long conflictCount(){return db.unresolvedConflictCount();}
     public String providerName(){return PROVIDER;}
     public boolean backendConfigured(){return client.configured();}
     public boolean signedIn(){return client.hasStoredSession();}
@@ -80,16 +82,19 @@ public class CloudSyncFoundation {
     }
 
     public SyncResult syncNow(String workspaceId,boolean canManage)throws Exception{
-        if(!backendConfigured())throw new Exception("Supabase backend is not configured");if(!signedIn())throw new Exception("Please sign in first");if(workspaceId==null||workspaceId.isEmpty())throw new Exception("Cloud workspace is not bound");
-        int pushed=0,pulled=0;String[] order={"customer","site","asset","technician","job"};List<AppDatabase.Row> pending=db.pendingBusinessSyncRows();
-        for(String type:order){for(AppDatabase.Row q:pending){if(!type.equals(q.s("entity_type")))continue;long localId=parseLong(q.s("entity_id"));if(localId<=0)continue;JSONObject body=payload(type,localId,workspaceId);if(body==null)continue;String remoteId=body.optString("id");client.upsert(tableFor(type),"id",body);db.markEntitySynced(type,localId,remoteId);pushed++;}}
-        for(String type:order){JSONArray rows=client.select(tableFor(type),"select=*&workspace_id=eq."+workspaceId+"&deleted_at=is.null");for(int i=0;i<rows.length();i++){db.upsertRemoteEntity(type,rows.getJSONObject(i));pulled++;}}
-        syncBranding(workspaceId,canManage);
-        CloudMediaSync.Result media=new CloudMediaSync(context,prefs,db,client).sync(workspaceId,canManage);
-        refreshTeamCache(workspaceId,canManage);
-        int pushedTotal=pushed+media.recordsPushed,pulledTotal=pulled+media.recordsPulled;
-        String status="Success · "+pushedTotal+" pushed, "+pulledTotal+" received · "+media.filesUploaded+" file upload"+(media.filesUploaded==1?"":"s")+", "+media.filesDownloaded+" download"+(media.filesDownloaded==1?"":"s");markSyncResult(true,db.now(),status);
-        String message="Synced "+pushedTotal+" local record"+(pushedTotal==1?"":"s")+", received "+pulledTotal+" cloud record"+(pulledTotal==1?"":"s")+" and synchronized "+(media.filesUploaded+media.filesDownloaded)+" media file"+((media.filesUploaded+media.filesDownloaded)==1?"":"s");return new SyncResult(pushedTotal,pulledTotal,message);
+        synchronized(SYNC_LOCK){
+            if(!backendConfigured())throw new Exception("Supabase backend is not configured");if(!signedIn())throw new Exception("Please sign in first");if(workspaceId==null||workspaceId.isEmpty())throw new Exception("Cloud workspace is not bound");
+            int pushed=0,pulled=0,deferred=0;String[] pushOrder={"customer","site","asset","technician","job"};String[] deleteOrder={"job","asset","site","customer","technician"};List<AppDatabase.Row> pending=db.pendingBusinessSyncRows();
+            for(String type:deleteOrder){for(AppDatabase.Row q:pending){if(!type.equals(q.s("entity_type"))||!"delete".equals(q.s("operation")))continue;long localId=parseLong(q.s("entity_id"));if(localId<=0)continue;String remote=q.s("remote_uuid");if(remote.isEmpty()){db.markDeletionSynced(type,localId,"");continue;}client.update(tableFor(type),"id=eq."+remote+"&workspace_id=eq."+workspaceId,new JSONObject().put("deleted_at",isoNow()));db.markDeletionSynced(type,localId,remote);pushed++;}}
+            for(String type:pushOrder){for(AppDatabase.Row q:pending){if(!type.equals(q.s("entity_type"))||"delete".equals(q.s("operation")))continue;long localId=parseLong(q.s("entity_id"));if(localId<=0)continue;JSONObject body=payload(type,localId,workspaceId);if(body==null)continue;String remoteId=body.optString("id");client.upsert(tableFor(type),"id",body);db.markEntitySynced(type,localId,remoteId);pushed++;}}
+            for(String type:pushOrder){JSONArray rows=client.select(tableFor(type),"select=*&workspace_id=eq."+workspaceId);for(int i=0;i<rows.length();i++){JSONObject o=rows.getJSONObject(i);String remote=o.optString("id","");if(remote.isEmpty())continue;if(isDeleted(o)){long before=db.localIdForRemote(type,remote);if(before>0&&!db.applyRemoteDeletion(type,remote)){deferred++;continue;}if(before>0)pulled++;continue;}long local=db.localIdForRemote(type,remote);if(local>0&&db.hasPendingSync(type,local)){db.recordSyncConflict(type,local,remote,"Cloud update deferred because this device has unsynced edits");deferred++;continue;}long saved=db.upsertRemoteEntity(type,o);if(saved>0)pulled++;}}
+            syncBranding(workspaceId,canManage);
+            CloudMediaSync.Result media=new CloudMediaSync(context,prefs,db,client).sync(workspaceId,canManage);
+            refreshTeamCache(workspaceId,canManage);
+            int pushedTotal=pushed+media.recordsPushed,pulledTotal=pulled+media.recordsPulled;long conflicts=db.unresolvedConflictCount();
+            String status="Success · "+pushedTotal+" pushed, "+pulledTotal+" received · "+media.filesUploaded+" file upload"+(media.filesUploaded==1?"":"s")+", "+media.filesDownloaded+" download"+(media.filesDownloaded==1?"":"s")+(conflicts>0?" · "+conflicts+" protected conflict"+(conflicts==1?"":"s"):"");markSyncResult(true,db.now(),status);prefs.edit().putLong("cloud_last_conflicts",conflicts).apply();
+            String message="Synced "+pushedTotal+" local record"+(pushedTotal==1?"":"s")+", received "+pulledTotal+" cloud record"+(pulledTotal==1?"":"s")+" and synchronized "+(media.filesUploaded+media.filesDownloaded)+" media file"+((media.filesUploaded+media.filesDownloaded)==1?"":"s")+(deferred>0?". "+deferred+" cloud change"+(deferred==1?" was":"s were")+" deferred to protect unsynced local work.":".");return new SyncResult(pushedTotal,pulledTotal,message);
+        }
     }
 
     private void syncBranding(String workspaceId,boolean canManage)throws Exception{
@@ -100,7 +105,7 @@ public class CloudSyncFoundation {
     }
 
     private JSONObject payload(String type,long id,String workspaceId)throws Exception{
-        AppDatabase.Row r=db.syncEntity(type,id);if(r.id()==0)return null;String remote=db.ensureRemoteUuid(type,id);JSONObject o=new JSONObject().put("id",remote).put("workspace_id",workspaceId);
+        AppDatabase.Row r=db.syncEntity(type,id);if(r.id()==0)return null;String remote=db.ensureRemoteUuid(type,id);JSONObject o=new JSONObject().put("id",remote).put("workspace_id",workspaceId).put("deleted_at",JSONObject.NULL);
         if("customer".equals(type)){copy(o,r,"name","contact","phone","email","address","notes");}
         else if("site".equals(type)){copy(o,r,"name","address","contact","phone","notes");putRemoteRef(o,"customer_id","customer",r.s("customer_id"));}
         else if("asset".equals(type)){copy(o,r,"tag","name","category","make_model","serial","location","notes");o.put("interval_days",r.i("interval_days"));putDate(o,"next_service",r.s("next_service"));putRemoteRef(o,"customer_id","customer",r.s("customer_id"));putRemoteRef(o,"site_id","site",r.s("site_id"));}
@@ -113,6 +118,8 @@ public class CloudSyncFoundation {
     private void putDate(JSONObject o,String key,String value)throws Exception{if(value==null||value.trim().isEmpty())o.put(key,JSONObject.NULL);else o.put(key,value.trim());}
     private void putRemoteRef(JSONObject o,String key,String type,String local)throws Exception{long id=parseLong(local);if(id<=0)o.put(key,JSONObject.NULL);else o.put(key,db.ensureRemoteUuid(type,id));}
     private long parseLong(String value){try{return Long.parseLong(value==null?"0":value);}catch(Exception e){return 0;}}
+    private boolean isDeleted(JSONObject o){return o!=null&&!o.isNull("deleted_at")&&!o.optString("deleted_at","").isEmpty();}
+    private String isoNow(){return java.time.Instant.now().toString();}
     private String tableFor(String type){if("customer".equals(type))return "customers";if("site".equals(type))return "sites";if("asset".equals(type))return "assets";if("technician".equals(type))return "technicians";if("job".equals(type))return "jobs";return type;}
     private String rpcString(Object raw){if(raw==null)return "";if(raw instanceof String)return ((String)raw).replace("\"","").trim();if(raw instanceof JSONObject)return ((JSONObject)raw).optString("result","");if(raw instanceof JSONArray&&((JSONArray)raw).length()>0)return ((JSONArray)raw).optString(0,"");return String.valueOf(raw).replace("\"","").trim();}
     public void markSyncResult(boolean ok,String when,String message){prefs.edit().putString("cloud_last_sync",when==null?"":when).putString("cloud_last_result",message==null?(ok?"Success":"Failed"):message).apply();}

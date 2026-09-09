@@ -20,7 +20,7 @@ import java.util.Map;
 
 public class AppDatabase extends SQLiteOpenHelper {
     public static final String DB_NAME = "fida_field.db";
-    public static final int DB_VERSION = 7;
+    public static final int DB_VERSION = 8;
 
     public static class Row extends HashMap<String, String> {
         public long id() { try { return Long.parseLong(getOrDefault("id", "0")); } catch (Exception e) { return 0; } }
@@ -42,7 +42,7 @@ public class AppDatabase extends SQLiteOpenHelper {
         db.execSQL("CREATE TABLE jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, report_no TEXT NOT NULL UNIQUE, customer_id INTEGER, site_id INTEGER, asset_id INTEGER, title TEXT NOT NULL, problem TEXT, diagnosis TEXT, work_done TEXT, parts TEXT, technician TEXT, priority TEXT DEFAULT 'Normal', status TEXT DEFAULT 'Open', job_date TEXT NOT NULL, next_service TEXT, signature_path TEXT, customer_name_signed TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE SET NULL, FOREIGN KEY(site_id) REFERENCES sites(id) ON DELETE SET NULL, FOREIGN KEY(asset_id) REFERENCES assets(id) ON DELETE SET NULL)");
         db.execSQL("CREATE TABLE job_photos (id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER NOT NULL, uri TEXT NOT NULL, caption TEXT, created_at TEXT NOT NULL, FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE)");
         db.execSQL("CREATE TABLE maintenance_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, asset_id INTEGER NOT NULL, job_id INTEGER, service_date TEXT NOT NULL, notes TEXT, next_service TEXT, created_at TEXT NOT NULL, FOREIGN KEY(asset_id) REFERENCES assets(id) ON DELETE CASCADE, FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE SET NULL)");
-        db.execSQL("CREATE TABLE technicians (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, role TEXT, phone TEXT, email TEXT, active INTEGER DEFAULT 1, created_at TEXT NOT NULL)");
+        db.execSQL("CREATE TABLE technicians (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, role TEXT, phone TEXT, email TEXT, user_uuid TEXT, active INTEGER DEFAULT 1, created_at TEXT NOT NULL)");
         db.execSQL("CREATE TABLE sequences (year INTEGER PRIMARY KEY, seq INTEGER NOT NULL)");
         db.execSQL("CREATE TABLE sync_queue (id INTEGER PRIMARY KEY AUTOINCREMENT, entity_type TEXT NOT NULL, entity_id INTEGER NOT NULL, operation TEXT NOT NULL DEFAULT 'upsert', changed_at TEXT NOT NULL, UNIQUE(entity_type,entity_id))");
         db.execSQL("CREATE TABLE workspace_members (id INTEGER PRIMARY KEY AUTOINCREMENT, workspace_id TEXT NOT NULL, member_uuid TEXT NOT NULL UNIQUE, user_uuid TEXT, name TEXT NOT NULL, email TEXT, role TEXT NOT NULL DEFAULT 'Technician', status TEXT NOT NULL DEFAULT 'Active', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)");
@@ -52,6 +52,7 @@ public class AppDatabase extends SQLiteOpenHelper {
         db.execSQL("CREATE INDEX idx_sync_conflicts_detected ON sync_conflicts(detected_at DESC)");
         db.execSQL("CREATE INDEX idx_workspace_members_workspace ON workspace_members(workspace_id,status)");
         db.execSQL("CREATE INDEX idx_workspace_invites_workspace ON workspace_invites(workspace_id,status)");
+        db.execSQL("CREATE INDEX idx_technicians_user_uuid ON technicians(user_uuid)");
         db.execSQL("CREATE INDEX idx_jobs_date ON jobs(job_date)");
         db.execSQL("CREATE INDEX idx_assets_next_service ON assets(next_service)");
     }
@@ -90,6 +91,10 @@ public class AppDatabase extends SQLiteOpenHelper {
         if(oldVersion<7){
             db.execSQL("CREATE TABLE IF NOT EXISTS sync_conflicts (id INTEGER PRIMARY KEY AUTOINCREMENT, entity_type TEXT NOT NULL, entity_id INTEGER NOT NULL, remote_uuid TEXT, reason TEXT NOT NULL, detected_at TEXT NOT NULL, UNIQUE(entity_type,entity_id))");
             db.execSQL("CREATE INDEX IF NOT EXISTS idx_sync_conflicts_detected ON sync_conflicts(detected_at DESC)");
+        }
+        if(oldVersion<8){
+            db.execSQL("ALTER TABLE technicians ADD COLUMN user_uuid TEXT");
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_technicians_user_uuid ON technicians(user_uuid)");
         }
     }
 
@@ -140,6 +145,7 @@ public class AppDatabase extends SQLiteOpenHelper {
             for(int i=0;i<members.length();i++){JSONObject o=members.getJSONObject(i);ContentValues v=new ContentValues();v.put("workspace_id",workspaceId);v.put("member_uuid",o.optString("member_id",java.util.UUID.randomUUID().toString()));v.put("user_uuid",o.optString("user_id",""));String name=o.optString("full_name","");String email=o.optString("email","");v.put("name",name.isEmpty()?(email.isEmpty()?"Team member":email):name);v.put("email",email);v.put("role",AccountTeamManager.normalizeRole(o.optString("role","technician")));v.put("status",AccountTeamManager.normalizeStatus(o.optString("status","active")));v.put("created_at",now());v.put("updated_at",now());d.insertOrThrow("workspace_members",null,v);}
             for(int i=0;i<invites.length();i++){JSONObject o=invites.getJSONObject(i);ContentValues v=new ContentValues();v.put("workspace_id",workspaceId);v.put("invite_uuid",o.optString("invite_id",java.util.UUID.randomUUID().toString()));v.put("email",o.optString("email",""));v.put("role",AccountTeamManager.normalizeRole(o.optString("role","technician")));v.put("status",AccountTeamManager.normalizeStatus(o.optString("status","pending")));v.put("token",o.optString("token",""));v.put("expires_at",o.optString("expires_at",""));v.put("created_at",now());v.put("updated_at",now());d.insertOrThrow("workspace_invites",null,v);}
             d.delete("sync_queue","entity_type IN ('workspace_member','workspace_invite')",null);d.setTransactionSuccessful();}finally{d.endTransaction();}
+        autoLinkPeople(workspaceId);
     }
     private String j(JSONObject o,String k){return o==null||o.isNull(k)?"":o.optString(k,"");}
     private void jt(ContentValues v,JSONObject o,String... keys){for(String k:keys)v.put(k,j(o,k));}
@@ -150,7 +156,7 @@ public class AppDatabase extends SQLiteOpenHelper {
         if("customer".equals(type)){jt(v,o,"name","contact","phone","email","address","notes");if(local==0){v.put("created_at",now());local=d.insertOrThrow("customers",null,v);}else d.update("customers",v,"id=?",new String[]{String.valueOf(local)});}
         else if("site".equals(type)){long cid=remoteLocal("customer",o,"customer_id");if(cid<=0)return 0;jt(v,o,"name","address","contact","phone","notes");v.put("customer_id",cid);if(local==0){v.put("created_at",now());local=d.insertOrThrow("sites",null,v);}else d.update("sites",v,"id=?",new String[]{String.valueOf(local)});}
         else if("asset".equals(type)){if(local==0&&!j(o,"tag").isEmpty())local=getAssetByTag(j(o,"tag")).id();if(local>0&&hasPendingSync(type,local)){recordSyncConflict(type,local,remote,"Cloud update deferred because this device has unsynced edits");return local;}jt(v,o,"tag","name","category","make_model","serial","location","notes","next_service");long cid=remoteLocal("customer",o,"customer_id"),sid=remoteLocal("site",o,"site_id");if(cid>0)v.put("customer_id",cid);else v.putNull("customer_id");if(sid>0)v.put("site_id",sid);else v.putNull("site_id");v.put("interval_days",o.optInt("interval_days",0));if(local==0){v.put("created_at",now());local=d.insertOrThrow("assets",null,v);}else d.update("assets",v,"id=?",new String[]{String.valueOf(local)});}
-        else if("technician".equals(type)){jt(v,o,"name","role","phone","email");v.put("active",o.optBoolean("active",true)?1:0);if(local==0){v.put("created_at",now());local=d.insertOrThrow("technicians",null,v);}else d.update("technicians",v,"id=?",new String[]{String.valueOf(local)});}
+        else if("technician".equals(type)){String linkedUser=j(o,"user_id");if(local==0&&!linkedUser.isEmpty())local=technicianForUser(linkedUser).id();jt(v,o,"name","role","phone","email");if(linkedUser.isEmpty())v.putNull("user_uuid");else v.put("user_uuid",linkedUser);v.put("active",o.optBoolean("active",true)?1:0);if(local==0){v.put("created_at",now());local=d.insertOrThrow("technicians",null,v);}else d.update("technicians",v,"id=?",new String[]{String.valueOf(local)});}
         else if("job".equals(type)){if(local==0&&!j(o,"report_no").isEmpty())local=one("SELECT * FROM jobs WHERE report_no=?",new String[]{j(o,"report_no")}).id();if(local>0&&hasPendingSync(type,local)){recordSyncConflict(type,local,remote,"Cloud update deferred because this device has unsynced edits");return local;}jt(v,o,"report_no","title","problem","diagnosis","work_done","parts","priority","status","job_date","next_service","customer_name_signed");v.put("technician",j(o,"technician_name"));long cid=remoteLocal("customer",o,"customer_id"),sid=remoteLocal("site",o,"site_id"),aid=remoteLocal("asset",o,"asset_id");if(cid>0)v.put("customer_id",cid);else v.putNull("customer_id");if(sid>0)v.put("site_id",sid);else v.putNull("site_id");if(aid>0)v.put("asset_id",aid);else v.putNull("asset_id");v.put("updated_at",now());if(local==0){v.put("created_at",now());local=d.insertOrThrow("jobs",null,v);}else d.update("jobs",v,"id=?",new String[]{String.valueOf(local)});}
         else return 0;bindRemoteUuid(type,local,remote);d.delete("sync_queue","entity_type=? AND entity_id=?",new String[]{type,String.valueOf(local)});resolveSyncConflict(type,local);return local;
     }
@@ -186,9 +192,22 @@ public class AppDatabase extends SQLiteOpenHelper {
     public Row getTechnician(long id) { return one("SELECT * FROM technicians WHERE id=?", new String[]{String.valueOf(id)}); }
     public List<Row> technicians() { return rows("SELECT * FROM technicians ORDER BY active DESC,name COLLATE NOCASE", null); }
     public List<Row> activeTechnicians() { return rows("SELECT * FROM technicians WHERE active=1 ORDER BY name COLLATE NOCASE", null); }
+    public Row technicianForUser(String userUuid){if(userUuid==null||userUuid.trim().isEmpty())return new Row();return one("SELECT * FROM technicians WHERE user_uuid=? LIMIT 1",new String[]{userUuid.trim()});}
+    public Row workspaceMemberForUser(String workspaceId,String userUuid){if(workspaceId==null||workspaceId.isEmpty()||userUuid==null||userUuid.isEmpty())return new Row();return one("SELECT * FROM workspace_members WHERE workspace_id=? AND user_uuid=? LIMIT 1",new String[]{workspaceId,userUuid});}
+    public List<Row> unlinkedWorkspaceMembers(String workspaceId){return rows("SELECT m.* FROM workspace_members m WHERE m.workspace_id=? AND m.status='Active' AND m.user_uuid IS NOT NULL AND m.user_uuid<>'' AND NOT EXISTS (SELECT 1 FROM technicians t WHERE t.user_uuid=m.user_uuid) ORDER BY CASE m.role WHEN 'Owner' THEN 0 WHEN 'Admin' THEN 1 WHEN 'Technician' THEN 2 ELSE 3 END,m.name COLLATE NOCASE",new String[]{workspaceId==null?"":workspaceId});}
     public long saveTechnician(long id, Map<String,String> m) {
-        ContentValues v=cv(m,"name","role","phone","email"); putInt(v,"active",m.get("active"));long saved=id;
+        ContentValues v=cv(m,"name","role","phone","email");if(m.containsKey("user_uuid")){String u=m.get("user_uuid");if(u==null||u.trim().isEmpty())v.putNull("user_uuid");else v.put("user_uuid",u.trim());}putInt(v,"active",m.get("active"));long saved=id;
         if(id==0){v.put("created_at",now());saved=getWritableDatabase().insertOrThrow("technicians",null,v);}else getWritableDatabase().update("technicians",v,"id=?",new String[]{String.valueOf(id)});queueSync("technician",saved,"upsert");return saved;
+    }
+    public void linkTechnicianToMember(long technicianId,long memberId){
+        Row tech=getTechnician(technicianId),member=getWorkspaceMember(memberId);if(tech.id()==0||member.id()==0||member.s("user_uuid").isEmpty())return;String user=member.s("user_uuid");
+        for(Row old:rows("SELECT id FROM technicians WHERE user_uuid=? AND id<>?",new String[]{user,String.valueOf(technicianId)})){ContentValues clear=new ContentValues();clear.putNull("user_uuid");getWritableDatabase().update("technicians",clear,"id=?",new String[]{String.valueOf(old.id())});queueSync("technician",old.id(),"upsert");}
+        ContentValues v=new ContentValues();v.put("user_uuid",user);if(tech.s("email").isEmpty()&&!member.s("email").isEmpty())v.put("email",member.s("email"));if(tech.s("name").isEmpty()&&!member.s("name").isEmpty())v.put("name",member.s("name"));getWritableDatabase().update("technicians",v,"id=?",new String[]{String.valueOf(technicianId)});queueSync("technician",technicianId,"upsert");
+    }
+    public int autoLinkPeople(String workspaceId){
+        if(workspaceId==null||workspaceId.isEmpty())return 0;int linked=0;
+        for(Row member:workspaceMembers(workspaceId)){String user=member.s("user_uuid"),email=member.s("email").trim();if(user.isEmpty()||email.isEmpty()||technicianForUser(user).id()>0)continue;List<Row> candidates=rows("SELECT * FROM technicians WHERE (user_uuid IS NULL OR user_uuid='') AND email<>'' AND lower(trim(email))=lower(trim(?))",new String[]{email});if(candidates.size()==1){linkTechnicianToMember(candidates.get(0).id(),member.id());linked++;}}
+        return linked;
     }
     public List<Row> jobsForAsset(long assetId){return rows("SELECT j.*,c.name customer_name FROM jobs j LEFT JOIN customers c ON c.id=j.customer_id WHERE j.asset_id=? ORDER BY j.job_date DESC,j.id DESC",new String[]{String.valueOf(assetId)});}
     public List<Row> maintenanceForAsset(long assetId){return rows("SELECT m.*,j.report_no,j.title job_title FROM maintenance_logs m LEFT JOIN jobs j ON j.id=m.job_id WHERE m.asset_id=? ORDER BY m.service_date DESC,m.id DESC",new String[]{String.valueOf(assetId)});}

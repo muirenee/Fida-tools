@@ -36,7 +36,7 @@ public class EntitlementManager {
 
     public String entitlementSource() {
         if (isOpenEdition()) return "Internal Fidalix edition";
-        if (isPro()) return "Verified Google Play subscription";
+        if (isPro()) return "Verified company/workspace Google Play subscription";
         return "No active Pro subscription";
     }
 

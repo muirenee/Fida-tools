@@ -109,7 +109,7 @@ public class CloudSyncFoundation {
         if("customer".equals(type)){copy(o,r,"name","contact","phone","email","address","notes");}
         else if("site".equals(type)){copy(o,r,"name","address","contact","phone","notes");putRemoteRef(o,"customer_id","customer",r.s("customer_id"));}
         else if("asset".equals(type)){copy(o,r,"tag","name","category","make_model","serial","location","notes");o.put("interval_days",r.i("interval_days"));putDate(o,"next_service",r.s("next_service"));putRemoteRef(o,"customer_id","customer",r.s("customer_id"));putRemoteRef(o,"site_id","site",r.s("site_id"));}
-        else if("technician".equals(type)){copy(o,r,"name","role","phone","email");o.put("active",r.i("active")==1);}
+        else if("technician".equals(type)){copy(o,r,"name","role","phone","email");String user=r.s("user_uuid");if(user.isEmpty())o.put("user_id",JSONObject.NULL);else o.put("user_id",user);o.put("active",r.i("active")==1);}
         else if("job".equals(type)){copy(o,r,"report_no","title","problem","diagnosis","work_done","parts","priority","status","customer_name_signed");o.put("technician_name",r.s("technician"));putDate(o,"job_date",r.s("job_date"));putDate(o,"next_service",r.s("next_service"));putRemoteRef(o,"customer_id","customer",r.s("customer_id"));putRemoteRef(o,"site_id","site",r.s("site_id"));putRemoteRef(o,"asset_id","asset",r.s("asset_id"));}
         else return null;return o;
     }

@@ -66,6 +66,9 @@ public class BillingManager {
     public String productId(){return prefs.getString("subscription_product_id","");}
     public String expiry(){return prefs.getString("subscription_expires_at","");}
     public String subscriptionState(){return prefs.getString("subscription_state","");}
+    private String workspaceId(){return prefs.getString(AccountTeamManager.KEY_WORKSPACE_ID,"");}
+    private boolean hasCloudWorkspace(){return prefs.getBoolean(AccountTeamManager.KEY_CLOUD_WORKSPACE_BOUND,false)&&!workspaceId().isEmpty();}
+    private boolean canManageBilling(){String r=prefs.getString(AccountTeamManager.KEY_ACCOUNT_ROLE,"");return AccountTeamManager.ROLE_OWNER.equals(r)||AccountTeamManager.ROLE_ADMIN.equals(r);}
 
     public void start(){
         if(BuildConfig.OPEN_EDITION)return;
@@ -116,6 +119,8 @@ public class BillingManager {
     public void purchase(Activity activity,String productId){
         if(BuildConfig.OPEN_EDITION){setResult("Billing is disabled in Fidalix Open");return;}
         if(!supabase.hasStoredSession()){setResult("Sign in to your Fida Field account before subscribing");return;}
+        if(!hasCloudWorkspace()){setResult("Create or join a cloud workspace before subscribing");return;}
+        if(!canManageBilling()){setResult("Only a workspace Owner or Admin can manage the company subscription");return;}
         if(billingClient==null||!ready){setResult("Google Play Billing is not ready yet");start();return;}
         ProductDetails details=products.get(productId);
         if(details==null){setResult("Subscription product is not available to this Play account/track");queryProducts();return;}
@@ -184,7 +189,7 @@ public class BillingManager {
     private void verifyOnServer(String productId,String token){
         new Thread(()->{
             try{
-                JSONObject body=new JSONObject().put("package_name",BuildConfig.APPLICATION_ID).put("product_id",productId).put("purchase_token",token);
+                JSONObject body=new JSONObject().put("package_name",BuildConfig.APPLICATION_ID).put("workspace_id",workspaceId()).put("product_id",productId).put("purchase_token",token);
                 Object raw=supabase.invokeFunction("verify-play-purchase",body);
                 JSONObject o=raw instanceof JSONObject?(JSONObject)raw:new JSONObject();
                 boolean active=o.optBoolean("active",false);
@@ -192,7 +197,7 @@ public class BillingManager {
                         .putString("subscription_product_id",o.optString("product_id",productId))
                         .putString("subscription_state",o.optString("subscription_state",""))
                         .putString("subscription_expires_at",o.optString("expires_at",""))
-                        .putString("billing_last_result",active?"Verified Pro subscription":"Subscription is not currently active")
+                        .putString("billing_last_result",active?"Verified workspace Pro subscription":"Subscription is not currently active")
                         .apply();
                 main.post(this::notifyChanged);
             }catch(Exception e){
@@ -204,20 +209,21 @@ public class BillingManager {
 
     public void refreshServerEntitlement(){
         if(BuildConfig.OPEN_EDITION)return;
-        if(!supabase.hasStoredSession()){
+        if(!supabase.hasStoredSession()||!hasCloudWorkspace()){
             prefs.edit().putBoolean("subscription_pro_enabled",false).apply();notifyChanged();return;
         }
         new Thread(()->{
             try{
-                JSONArray a=supabase.select("billing_entitlements","select=active,product_id,subscription_state,expires_at,last_verified_at&user_id=eq."+supabase.userId()+"&limit=1");
-                if(a.length()==0){prefs.edit().putBoolean("subscription_pro_enabled",false).putString("billing_last_result","No verified Pro entitlement").apply();}
+                String workspace=workspaceId();
+                JSONArray a=supabase.select("workspace_billing_entitlements","select=active,product_id,subscription_state,expires_at,last_verified_at,purchaser_user_id&workspace_id=eq."+workspace+"&limit=1");
+                if(a.length()==0){prefs.edit().putBoolean("subscription_pro_enabled",false).putString("billing_last_result","No verified Pro plan for this workspace").apply();}
                 else{
                     JSONObject o=a.getJSONObject(0);boolean active=o.optBoolean("active",false);String expiry=o.optString("expires_at","");
                     if(active&&!expiry.isEmpty()){try{active=java.time.Instant.parse(expiry).isAfter(java.time.Instant.now());}catch(Exception ignored){}}
-                    prefs.edit().putBoolean("subscription_pro_enabled",active).putString("subscription_product_id",o.optString("product_id","")).putString("subscription_state",o.optString("subscription_state","")).putString("subscription_expires_at",expiry).putString("billing_last_result",active?"Server entitlement active":"No active Pro entitlement").apply();
+                    prefs.edit().putBoolean("subscription_pro_enabled",active).putString("subscription_product_id",o.optString("product_id","")).putString("subscription_state",o.optString("subscription_state","")).putString("subscription_expires_at",expiry).putString("billing_last_result",active?"Workspace Pro plan active":"No active Pro plan for this workspace").apply();
                 }
                 main.post(this::notifyChanged);
-            }catch(Exception e){setResultFromBackground("Entitlement refresh failed · "+safe(e));}
+            }catch(Exception e){setResultFromBackground("Workspace entitlement refresh failed · "+safe(e));}
         },"fida-entitlement-refresh").start();
     }
 

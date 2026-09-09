@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: fida-field-${{ github.ref }}
@@ -107,7 +107,6 @@ jobs:
           s = s.replace(anchor, addition, 1)
           s = s.replace('Fida Field 0.9.6 Test\\nA polished, offline-first field service and maintenance manager by Fidalix.', 'Fida Field 0.9.7.1 Test\\nA polished, offline-first field service and maintenance manager by Fidalix.', 1)
           java.write_text(s)
-
           gradle = Path('fida-field/app/build.gradle')
           g = gradle.read_text()
           assert "versionCode 8" in g and "versionName '0.9.7-test'" in g, '0.9.7 version markers not found'
@@ -181,3 +180,19 @@ jobs:
           path: Fida-Field-0.9.7.1-source-snapshot.zip
           retention-days: 2
           if-no-files-found: error
+
+      - name: Commit normalized Android source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f fida-field/app/fida-test.keystore
+          grep -qxF '*.keystore' fida-field/.gitignore || printf '\n*.keystore\n' >> fida-field/.gitignore
+          git config user.name 'Fida Field CI'
+          git config user.email 'actions@users.noreply.github.com'
+          git add fida-field
+          if git diff --cached --quiet; then
+            echo 'Normalized source already present.'
+            exit 0
+          fi
+          git commit -m 'Normalize Fida Field 0.9.7.1 Android source'
+          git push origin HEAD:fida-field-dev

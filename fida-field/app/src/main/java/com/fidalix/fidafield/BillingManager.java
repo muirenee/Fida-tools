@@ -10,6 +10,7 @@ import com.android.billingclient.api.BillingClient;
 import com.android.billingclient.api.BillingClientStateListener;
 import com.android.billingclient.api.BillingFlowParams;
 import com.android.billingclient.api.BillingResult;
+import com.android.billingclient.api.PendingPurchasesParams;
 import com.android.billingclient.api.ProductDetails;
 import com.android.billingclient.api.Purchase;
 import com.android.billingclient.api.QueryProductDetailsParams;
@@ -69,12 +70,13 @@ public class BillingManager {
     public void start(){
         if(BuildConfig.OPEN_EDITION)return;
         if(billingClient!=null)return;
+        PendingPurchasesParams pending=PendingPurchasesParams.newBuilder().enableOneTimeProducts().build();
         billingClient=BillingClient.newBuilder(context)
                 .setListener((billingResult,purchases)->{
                     if(billingResult.getResponseCode()==BillingClient.BillingResponseCode.OK && purchases!=null)processPurchases(purchases);
                     else setResult("Play update · "+billingResult.getDebugMessage());
                 })
-                .enablePendingPurchases()
+                .enablePendingPurchases(pending)
                 .enableAutoServiceReconnection()
                 .build();
         billingClient.startConnection(new BillingClientStateListener(){

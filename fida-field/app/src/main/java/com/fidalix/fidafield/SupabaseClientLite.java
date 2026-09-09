@@ -7,6 +7,7 @@ import org.json.JSONObject;
 import org.json.JSONTokener;
 
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
@@ -14,7 +15,7 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 
-/** Minimal Supabase Auth/PostgREST client used by the native Java app.
+/** Minimal Supabase Auth/PostgREST/Storage client used by the native Java app.
  * It intentionally keeps the publishable key client-side and relies on Supabase Auth + RLS
  * for authorization. No service-role/secret key is ever shipped in the APK. */
 public class SupabaseClientLite {
@@ -92,6 +93,26 @@ public class SupabaseClientLite {
         request("PATCH",BuildConfig.SUPABASE_URL+"/rest/v1/"+table+"?"+filter,body,true,"Prefer","return=minimal");
     }
 
+    /** Standard Supabase Storage upload. x-upsert makes retries idempotent. */
+    public void uploadObject(String bucket,String path,byte[] bytes,String contentType)throws Exception{
+        if(bytes==null)throw new Exception("No file data to upload");
+        String address=BuildConfig.SUPABASE_URL+"/storage/v1/object/"+pathEncode(bucket)+"/"+pathEncode(path);
+        HttpURLConnection c=authorizedConnection("POST",address);c.setDoOutput(true);c.setRequestProperty("Content-Type",contentType==null||contentType.isEmpty()?"application/octet-stream":contentType);c.setRequestProperty("x-upsert","true");c.setFixedLengthStreamingMode(bytes.length);
+        try(OutputStream out=c.getOutputStream()){out.write(bytes);}int code=c.getResponseCode();InputStream stream=code>=200&&code<300?c.getInputStream():c.getErrorStream();String text=read(stream);if(code<200||code>=300)throw new Exception(errorMessage(text,"Storage upload failed ("+code+")"));
+    }
+
+    /** Downloads from the authenticated/private Storage route. */
+    public byte[] downloadObject(String bucket,String path)throws Exception{
+        String address=BuildConfig.SUPABASE_URL+"/storage/v1/object/authenticated/"+pathEncode(bucket)+"/"+pathEncode(path);
+        HttpURLConnection c=authorizedConnection("GET",address);int code=c.getResponseCode();InputStream stream=code>=200&&code<300?c.getInputStream():c.getErrorStream();
+        if(code<200||code>=300){String text=read(stream);throw new Exception(errorMessage(text,"Storage download failed ("+code+")"));}
+        return readBytes(stream);
+    }
+
+    public void deleteObject(String bucket,String path)throws Exception{
+        if(path==null||path.trim().isEmpty())return;String address=BuildConfig.SUPABASE_URL+"/storage/v1/object/"+pathEncode(bucket)+"/"+pathEncode(path);HttpURLConnection c=authorizedConnection("DELETE",address);int code=c.getResponseCode();InputStream stream=code>=200&&code<300?c.getInputStream():c.getErrorStream();String text=read(stream);if(code<200||code>=300)throw new Exception(errorMessage(text,"Storage delete failed ("+code+")"));
+    }
+
     public String accessToken()throws Exception{
         if(!configured())return "";
         String token=prefs.getString(KEY_ACCESS,"");long expiry=prefs.getLong(KEY_EXPIRES,0L);long now=System.currentTimeMillis()/1000L;
@@ -111,6 +132,10 @@ public class SupabaseClientLite {
 
     public void clearSession(){prefs.edit().remove(KEY_ACCESS).remove(KEY_REFRESH).remove(KEY_EXPIRES).remove(KEY_EMAIL).remove(KEY_USER_ID).apply();}
 
+    private HttpURLConnection authorizedConnection(String method,String address)throws Exception{
+        if(!configured())throw new Exception("Supabase is not configured in this build");String token=accessToken();if(token.isEmpty())throw new Exception("Please sign in first");HttpURLConnection c=(HttpURLConnection)new URL(address).openConnection();c.setRequestMethod(method);c.setConnectTimeout(20000);c.setReadTimeout(60000);c.setRequestProperty("apikey",BuildConfig.SUPABASE_PUBLISHABLE_KEY);c.setRequestProperty("Authorization","Bearer "+token);c.setRequestProperty("Accept","application/json");return c;
+    }
+
     private Object request(String method,String address,JSONObject body,boolean authenticated,String extraHeader,String extraValue)throws Exception{
         if(!configured())throw new Exception("Supabase is not configured in this build");
         HttpURLConnection c=(HttpURLConnection)new URL(address).openConnection();c.setRequestMethod(method);c.setConnectTimeout(15000);c.setReadTimeout(30000);c.setRequestProperty("apikey",BuildConfig.SUPABASE_PUBLISHABLE_KEY);c.setRequestProperty("Accept","application/json");
@@ -126,5 +151,7 @@ public class SupabaseClientLite {
         try{Object v=new JSONTokener(text).nextValue();if(v instanceof JSONObject){JSONObject o=(JSONObject)v;String m=o.optString("msg",o.optString("message",o.optString("error_description",o.optString("error",fallback))));return m.isEmpty()?fallback:m;}}catch(Exception ignored){}return text==null||text.trim().isEmpty()?fallback:text.trim();
     }
     private String read(InputStream in)throws Exception{if(in==null)return "";StringBuilder b=new StringBuilder();try(BufferedReader r=new BufferedReader(new InputStreamReader(in,StandardCharsets.UTF_8))){String line;while((line=r.readLine())!=null)b.append(line);}return b.toString();}
+    private byte[] readBytes(InputStream in)throws Exception{if(in==null)return new byte[0];try(InputStream src=in;ByteArrayOutputStream out=new ByteArrayOutputStream()){byte[] buf=new byte[16384];int n;while((n=src.read(buf))>=0){if(n>0)out.write(buf,0,n);}return out.toByteArray();}}
     private String enc(String s){try{return java.net.URLEncoder.encode(s,"UTF-8");}catch(Exception e){return s;}}
+    private String pathEncode(String s){if(s==null)return "";String[] parts=s.replace('\\','/').split("/");StringBuilder out=new StringBuilder();for(String p:parts){if(p.isEmpty())continue;if(out.length()>0)out.append('/');out.append(enc(p).replace("+","%20"));}return out.toString();}
 }

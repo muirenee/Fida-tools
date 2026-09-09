@@ -5,11 +5,7 @@ import android.content.SharedPreferences;
 import java.util.Calendar;
 import java.util.Locale;
 
-/**
- * Central commercial-entitlement rules. 0.9.5 uses a test Pro switch only;
- * future Google Play Billing can replace the entitlement source without
- * changing feature checks throughout the app.
- */
+/** Central commercial entitlement rules shared by the Play and Fidalix Open editions. */
 public class EntitlementManager {
     public static final int FREE_MONTHLY_REPORT_LIMIT = 5;
     public static final String PRODUCT_PRO_MONTHLY = "fida_field_pro_monthly";
@@ -23,14 +19,25 @@ public class EntitlementManager {
         this.db = db;
     }
 
+    public boolean isOpenEdition() {
+        return BuildConfig.OPEN_EDITION;
+    }
+
     public boolean isPro() {
-        // Production billing/account entitlement can set subscription_pro_enabled.
-        // The test switch remains available only during development builds.
-        return prefs.getBoolean("subscription_pro_enabled", false) || prefs.getBoolean("test_pro_enabled", false);
+        // The internal Fidalix Open build intentionally bypasses Google Play Billing.
+        // Public Play builds only trust the server-backed verified entitlement flag.
+        return isOpenEdition() || prefs.getBoolean("subscription_pro_enabled", false);
     }
 
     public String planName() {
-        return isPro() ? "Pro (test entitlement)" : "Free";
+        if (isOpenEdition()) return "Fidalix Open";
+        return isPro() ? "Pro" : "Free";
+    }
+
+    public String entitlementSource() {
+        if (isOpenEdition()) return "Internal Fidalix edition";
+        if (isPro()) return "Verified Google Play subscription";
+        return "No active Pro subscription";
     }
 
     public int reportsCreatedThisMonth() {
@@ -47,15 +54,11 @@ public class EntitlementManager {
         return isPro() || reportsCreatedThisMonth() < FREE_MONTHLY_REPORT_LIMIT;
     }
 
-    public boolean canExportCsv() {
-        return isPro();
-    }
-
-    public boolean canUseCustomBranding() {
-        return isPro();
-    }
+    public boolean canExportCsv() { return isPro(); }
+    public boolean canUseCustomBranding() { return isPro(); }
 
     public String usageSummary() {
+        if (isOpenEdition()) return "Unlimited · internal edition";
         if (isPro()) return "Unlimited service reports";
         return reportsCreatedThisMonth() + "/" + FREE_MONTHLY_REPORT_LIMIT + " reports this month";
     }

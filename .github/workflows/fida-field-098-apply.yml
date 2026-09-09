@@ -1,4 +1,4 @@
-name: Fida Field 0.9.8 Transform Extract
+name: Fida Field 0.9.8 Build
 
 on:
   push:
@@ -9,23 +9,86 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: fida-field-098-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  extract:
+  build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - name: Reconstruct current transform script
+      - name: Checkout normalized 0.9.7.1 source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply 0.9.8 source transform
         shell: bash
         run: |
           set -euo pipefail
           cat .fida-dev/0.9.8-script.part* | tr -d '\n' | base64 -d > /tmp/fida-098-transform.py
-          cp /tmp/fida-098-transform.py fida-098-transform.py
-          wc -c fida-098-transform.py
-      - name: Upload transform snapshot
+          echo 'e1353d9a6198b251f3fa19d71f17fcf27322d2e40c857e5e7f99fef83e89669e  /tmp/fida-098-transform.py' | sha256sum -c -
+          python3 -m py_compile /tmp/fida-098-transform.py
+          python3 /tmp/fida-098-transform.py
+          grep -q 'DB_VERSION = 4' fida-field/app/src/main/java/com/fidalix/fidafield/AppDatabase.java
+          grep -q 'Custom branding · Pro' fida-field/app/src/main/java/com/fidalix/fidafield/MainActivity.java
+          grep -q 'Account & workspace' fida-field/app/src/main/java/com/fidalix/fidafield/MainActivity.java
+          grep -q 'Team members' fida-field/app/src/main/java/com/fidalix/fidafield/MainActivity.java
+          grep -q "versionName '0.9.8-test'" fida-field/app/build.gradle
+
+      - name: Reconstruct persistent test signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .fida-signing/fida-field-test.part* | tr -d '\n' | base64 -d > fida-field/app/fida-test.keystore
+          echo 'd407757a25505be46048d30b3b19b85a4abb9b0bf14475b2368e0f2e7e9bac51  fida-field/app/fida-test.keystore' | sha256sum -c -
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      - name: Install Android API 36
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | sort -V | tail -1); fi
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+          "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Build installable 0.9.8 APK
+        working-directory: fida-field
+        run: gradle :app:assembleDebug --stacktrace
+
+      - name: Upload 0.9.8 APK
         uses: actions/upload-artifact@v4
         with:
-          name: fida-098-transform-snapshot
-          path: fida-098-transform.py
-          retention-days: 2
+          name: Fida-Field-0.9.8-test-apk
+          path: fida-field/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Commit normalized 0.9.8 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f fida-field/app/fida-test.keystore
+          git config user.name 'Fida Field CI'
+          git config user.email 'actions@users.noreply.github.com'
+          git add fida-field
+          if git diff --cached --quiet; then
+            echo 'Source already normalized.'
+            exit 0
+          fi
+          git commit -m 'Fida Field 0.9.8 account workspace and team foundation'
+          git push origin HEAD:fida-field-dev

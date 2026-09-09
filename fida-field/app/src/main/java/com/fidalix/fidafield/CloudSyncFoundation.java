@@ -2,25 +2,110 @@ package com.fidalix.fidafield;
 
 import android.content.SharedPreferences;
 
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import java.util.List;
 import java.util.UUID;
 
-/** Offline-first synchronization state. Local changes are never discarded before a
- * backend acknowledges them. */
+/** Offline-first Supabase synchronization layer. Local edits remain queued until the
+ * server acknowledges them. Core business entities are pushed in dependency order and
+ * then current workspace records are pulled for multi-device use. */
 public class CloudSyncFoundation {
     public static final String PROVIDER="Supabase";
     private final SharedPreferences prefs;
     private final AppDatabase db;
+    private final SupabaseClientLite client;
 
-    public CloudSyncFoundation(SharedPreferences prefs,AppDatabase db){this.prefs=prefs;this.db=db;}
+    public static class WorkspaceMembership {
+        public final String id,name,role;
+        public WorkspaceMembership(String id,String name,String role){this.id=id;this.name=name;this.role=role;}
+    }
+    public static class SyncResult {
+        public final int pushed,pulled;
+        public final String message;
+        public SyncResult(int pushed,int pulled,String message){this.pushed=pushed;this.pulled=pulled;this.message=message;}
+    }
+
+    public CloudSyncFoundation(SharedPreferences prefs,AppDatabase db){this.prefs=prefs;this.db=db;this.client=new SupabaseClientLite(prefs);}
 
     public String deviceId(){String id=prefs.getString("cloud_device_id","");if(id==null||id.isEmpty()){id=UUID.randomUUID().toString();prefs.edit().putString("cloud_device_id",id).apply();}return id;}
-    public long pendingChanges(){return db.count("sync_queue",null,null);}
+    public long pendingChanges(){return db.pendingBusinessChanges();}
     public String providerName(){return PROVIDER;}
-    public boolean backendConfigured(){return !prefs.getString("supabase_url","").trim().isEmpty()&&!prefs.getString("supabase_anon_key","").trim().isEmpty();}
-    public boolean signedIn(){return backendConfigured()&&!prefs.getString("cloud_access_token","").isEmpty();}
-    public String accountEmail(){return prefs.getString("cloud_account_email","");}
+    public boolean backendConfigured(){return client.configured();}
+    public boolean signedIn(){return client.hasStoredSession();}
+    public String accountEmail(){return client.accountEmail();}
+    public String userId(){return client.userId();}
     public String lastSync(){String v=prefs.getString("cloud_last_sync","");return v.isEmpty()?"Never":v;}
     public String lastResult(){return prefs.getString("cloud_last_result","Not connected");}
     public String backendStatus(){if(!backendConfigured())return "Not configured";return signedIn()?"Connected":"Configured · sign-in required";}
+
+    public SupabaseClientLite.AuthResult signUp(String name,String email,String password)throws Exception{return client.signUp(name,email,password);}
+    public SupabaseClientLite.AuthResult signIn(String email,String password)throws Exception{return client.signIn(email,password);}
+    public void signOut()throws Exception{client.signOut();}
+
+    public WorkspaceMembership firstWorkspace()throws Exception{
+        Object raw=client.rpc("list_my_workspaces",new JSONObject());
+        if(!(raw instanceof JSONArray)||((JSONArray)raw).length()==0)return null;
+        JSONArray a=(JSONArray)raw;String preferred=prefs.getString(AccountTeamManager.KEY_WORKSPACE_ID,"");JSONObject chosen=null;
+        for(int i=0;i<a.length();i++){JSONObject o=a.getJSONObject(i);if(preferred.equals(o.optString("workspace_id"))){chosen=o;break;}}
+        if(chosen==null)chosen=a.getJSONObject(0);
+        return new WorkspaceMembership(chosen.optString("workspace_id"),chosen.optString("workspace_name"),AccountTeamManager.normalizeRole(chosen.optString("role")));
+    }
+
+    public WorkspaceMembership createWorkspace(String name)throws Exception{
+        Object raw=client.rpc("create_workspace",new JSONObject().put("p_name",name));String id=rpcString(raw);if(id.isEmpty())throw new Exception("Workspace was created but no ID was returned");return new WorkspaceMembership(id,name,AccountTeamManager.ROLE_OWNER);
+    }
+
+    public WorkspaceMembership acceptInvite(String token)throws Exception{
+        Object raw=client.rpc("accept_workspace_invite",new JSONObject().put("p_token",token.trim()));String id=rpcString(raw);if(id.isEmpty())throw new Exception("Invitation could not be accepted");
+        WorkspaceMembership m=firstWorkspace();if(m!=null&&id.equals(m.id))return m;
+        JSONArray w=client.select("workspaces","select=id,name&id=eq."+id);String name=w.length()>0?w.getJSONObject(0).optString("name","Workspace"):"Workspace";return new WorkspaceMembership(id,name,AccountTeamManager.ROLE_TECHNICIAN);
+    }
+
+    public String createInvite(String workspaceId,String email,String role)throws Exception{
+        JSONObject b=new JSONObject().put("p_workspace_id",workspaceId).put("p_email",email).put("p_role",role.toLowerCase());return rpcString(client.rpc("create_workspace_invite",b));
+    }
+    public void cancelInvite(String inviteId)throws Exception{client.rpc("cancel_workspace_invite",new JSONObject().put("p_invite_id",inviteId));}
+    public void updateMember(String workspaceId,String memberId,String role,String status)throws Exception{
+        client.rpc("update_workspace_member",new JSONObject().put("p_workspace_id",workspaceId).put("p_member_id",memberId).put("p_role",role.toLowerCase()).put("p_status",status.toLowerCase()));
+    }
+
+    public void refreshTeamCache(String workspaceId,boolean canManage)throws Exception{
+        Object membersRaw=client.rpc("list_workspace_members",new JSONObject().put("p_workspace_id",workspaceId));JSONArray members=membersRaw instanceof JSONArray?(JSONArray)membersRaw:new JSONArray();JSONArray invites=new JSONArray();
+        if(canManage){Object invitesRaw=client.rpc("list_workspace_invites",new JSONObject().put("p_workspace_id",workspaceId));if(invitesRaw instanceof JSONArray)invites=(JSONArray)invitesRaw;}
+        db.cacheWorkspaceTeam(workspaceId,members,invites);
+    }
+
+    public SyncResult syncNow(String workspaceId,boolean canManage)throws Exception{
+        if(!backendConfigured())throw new Exception("Supabase backend is not configured");if(!signedIn())throw new Exception("Please sign in first");if(workspaceId==null||workspaceId.isEmpty())throw new Exception("Cloud workspace is not bound");
+        int pushed=0,pulled=0;String[] order={"customer","site","asset","technician","job"};List<AppDatabase.Row> pending=db.pendingBusinessSyncRows();
+        for(String type:order){for(AppDatabase.Row q:pending){if(!type.equals(q.s("entity_type")))continue;long localId=q.id()==0?q.i("entity_id"):Long.parseLong(q.s("entity_id"));if(localId<=0)continue;JSONObject body=payload(type,localId,workspaceId);if(body==null)continue;String remoteId=body.optString("id");client.upsert(tableFor(type),"id",body);db.markEntitySynced(type,localId,remoteId);pushed++;}}
+        for(String type:order){JSONArray rows=client.select(tableFor(type),"select=*&workspace_id=eq."+workspaceId+"&deleted_at=is.null");for(int i=0;i<rows.length();i++){db.upsertRemoteEntity(type,rows.getJSONObject(i));pulled++;}}
+        syncBranding(workspaceId,canManage);
+        refreshTeamCache(workspaceId,canManage);
+        markSyncResult(true,db.now(),"Success · "+pushed+" pushed, "+pulled+" received");return new SyncResult(pushed,pulled,"Synced "+pushed+" local change"+(pushed==1?"":"s")+" and received "+pulled+" cloud record"+(pulled==1?"":"s"));
+    }
+
+    private void syncBranding(String workspaceId,boolean canManage)throws Exception{
+        if(canManage){JSONObject b=new JSONObject().put("workspace_id",workspaceId).put("enabled",prefs.getBoolean(BrandingManager.KEY_ENABLED,false)).put("primary_color",prefs.getString(BrandingManager.KEY_PRIMARY,"#464B45")).put("accent_color",prefs.getString(BrandingManager.KEY_ACCENT,"#F99D1C")).put("highlight_color",prefs.getString(BrandingManager.KEY_HIGHLIGHT,"#FFC222"));client.upsert("branding_settings","workspace_id",b);}
+        JSONArray a=client.select("branding_settings","select=enabled,primary_color,accent_color,highlight_color&workspace_id=eq."+workspaceId);if(a.length()>0){JSONObject o=a.getJSONObject(0);prefs.edit().putBoolean(BrandingManager.KEY_ENABLED,o.optBoolean("enabled",false)).putString(BrandingManager.KEY_PRIMARY,o.optString("primary_color","#464B45")).putString(BrandingManager.KEY_ACCENT,o.optString("accent_color","#F99D1C")).putString(BrandingManager.KEY_HIGHLIGHT,o.optString("highlight_color","#FFC222")).apply();}
+    }
+
+    private JSONObject payload(String type,long id,String workspaceId)throws Exception{
+        AppDatabase.Row r=db.syncEntity(type,id);if(r.id()==0)return null;String remote=db.ensureRemoteUuid(type,id);JSONObject o=new JSONObject().put("id",remote).put("workspace_id",workspaceId);
+        if("customer".equals(type)){copy(o,r,"name","contact","phone","email","address","notes");}
+        else if("site".equals(type)){copy(o,r,"name","address","contact","phone","notes");putRemoteRef(o,"customer_id","customer",r.s("customer_id"));}
+        else if("asset".equals(type)){copy(o,r,"tag","name","category","make_model","serial","location","notes");o.put("interval_days",r.i("interval_days"));putDate(o,"next_service",r.s("next_service"));putRemoteRef(o,"customer_id","customer",r.s("customer_id"));putRemoteRef(o,"site_id","site",r.s("site_id"));}
+        else if("technician".equals(type)){copy(o,r,"name","role","phone","email");o.put("active",r.i("active")==1);}
+        else if("job".equals(type)){copy(o,r,"report_no","title","problem","diagnosis","work_done","parts","priority","status","customer_name_signed");o.put("technician_name",r.s("technician"));putDate(o,"job_date",r.s("job_date"));putDate(o,"next_service",r.s("next_service"));putRemoteRef(o,"customer_id","customer",r.s("customer_id"));putRemoteRef(o,"site_id","site",r.s("site_id"));putRemoteRef(o,"asset_id","asset",r.s("asset_id"));}
+        else return null;return o;
+    }
+
+    private void copy(JSONObject o,AppDatabase.Row r,String... keys)throws Exception{for(String k:keys)o.put(k,r.s(k));}
+    private void putDate(JSONObject o,String key,String value)throws Exception{if(value==null||value.trim().isEmpty())o.put(key,JSONObject.NULL);else o.put(key,value.trim());}
+    private void putRemoteRef(JSONObject o,String key,String type,String local)throws Exception{long id=0;try{id=Long.parseLong(local);}catch(Exception ignored){}if(id<=0)o.put(key,JSONObject.NULL);else o.put(key,db.ensureRemoteUuid(type,id));}
+    private String tableFor(String type){if("customer".equals(type))return "customers";if("site".equals(type))return "sites";if("asset".equals(type))return "assets";if("technician".equals(type))return "technicians";if("job".equals(type))return "jobs";return type;}
+    private String rpcString(Object raw){if(raw==null)return "";if(raw instanceof String)return ((String)raw).replace("\"","").trim();if(raw instanceof JSONObject)return ((JSONObject)raw).optString("result","");if(raw instanceof JSONArray&&((JSONArray)raw).length()>0)return ((JSONArray)raw).optString(0,"");return String.valueOf(raw).replace("\"","").trim();}
     public void markSyncResult(boolean ok,String when,String message){prefs.edit().putString("cloud_last_sync",when==null?"":when).putString("cloud_last_result",message==null?(ok?"Success":"Failed"):message).apply();}
 }

@@ -36,6 +36,7 @@ jobs:
           grep -q 'People & Team' fida-field/app/src/main/java/com/fidalix/fidafield/MainActivity.java
           grep -q 'invokeFunction' fida-field/app/src/main/java/com/fidalix/fidafield/SupabaseClientLite.java
           grep -q 'class BillingManager' fida-field/app/src/main/java/com/fidalix/fidafield/BillingManager.java
+          grep -q 'PendingPurchasesParams' fida-field/app/src/main/java/com/fidalix/fidafield/BillingManager.java
 
       - name: Verify Supabase build configuration
         shell: bash

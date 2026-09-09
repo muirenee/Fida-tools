@@ -1,5 +1,6 @@
 package com.fidalix.fidafield;
 
+import android.content.Context;
 import android.content.SharedPreferences;
 
 import org.json.JSONArray;
@@ -10,9 +11,10 @@ import java.util.UUID;
 
 /** Offline-first Supabase synchronization layer. Local edits remain queued until the
  * server acknowledges them. Core business entities are pushed in dependency order and
- * then current workspace records are pulled for multi-device use. */
+ * then current workspace records and private Storage media are synchronized. */
 public class CloudSyncFoundation {
     public static final String PROVIDER="Supabase";
+    private final Context context;
     private final SharedPreferences prefs;
     private final AppDatabase db;
     private final SupabaseClientLite client;
@@ -27,7 +29,7 @@ public class CloudSyncFoundation {
         public SyncResult(int pushed,int pulled,String message){this.pushed=pushed;this.pulled=pulled;this.message=message;}
     }
 
-    public CloudSyncFoundation(SharedPreferences prefs,AppDatabase db){this.prefs=prefs;this.db=db;this.client=new SupabaseClientLite(prefs);}
+    public CloudSyncFoundation(Context context,SharedPreferences prefs,AppDatabase db){this.context=context.getApplicationContext();this.prefs=prefs;this.db=db;this.client=new SupabaseClientLite(prefs);}
 
     public String deviceId(){String id=prefs.getString("cloud_device_id","");if(id==null||id.isEmpty()){id=UUID.randomUUID().toString();prefs.edit().putString("cloud_device_id",id).apply();}return id;}
     public long pendingChanges(){return db.pendingBusinessChanges();}
@@ -80,16 +82,21 @@ public class CloudSyncFoundation {
     public SyncResult syncNow(String workspaceId,boolean canManage)throws Exception{
         if(!backendConfigured())throw new Exception("Supabase backend is not configured");if(!signedIn())throw new Exception("Please sign in first");if(workspaceId==null||workspaceId.isEmpty())throw new Exception("Cloud workspace is not bound");
         int pushed=0,pulled=0;String[] order={"customer","site","asset","technician","job"};List<AppDatabase.Row> pending=db.pendingBusinessSyncRows();
-        for(String type:order){for(AppDatabase.Row q:pending){if(!type.equals(q.s("entity_type")))continue;long localId=q.id()==0?q.i("entity_id"):Long.parseLong(q.s("entity_id"));if(localId<=0)continue;JSONObject body=payload(type,localId,workspaceId);if(body==null)continue;String remoteId=body.optString("id");client.upsert(tableFor(type),"id",body);db.markEntitySynced(type,localId,remoteId);pushed++;}}
+        for(String type:order){for(AppDatabase.Row q:pending){if(!type.equals(q.s("entity_type")))continue;long localId=parseLong(q.s("entity_id"));if(localId<=0)continue;JSONObject body=payload(type,localId,workspaceId);if(body==null)continue;String remoteId=body.optString("id");client.upsert(tableFor(type),"id",body);db.markEntitySynced(type,localId,remoteId);pushed++;}}
         for(String type:order){JSONArray rows=client.select(tableFor(type),"select=*&workspace_id=eq."+workspaceId+"&deleted_at=is.null");for(int i=0;i<rows.length();i++){db.upsertRemoteEntity(type,rows.getJSONObject(i));pulled++;}}
         syncBranding(workspaceId,canManage);
+        CloudMediaSync.Result media=new CloudMediaSync(context,prefs,db,client).sync(workspaceId,canManage);
         refreshTeamCache(workspaceId,canManage);
-        markSyncResult(true,db.now(),"Success · "+pushed+" pushed, "+pulled+" received");return new SyncResult(pushed,pulled,"Synced "+pushed+" local change"+(pushed==1?"":"s")+" and received "+pulled+" cloud record"+(pulled==1?"":"s"));
+        int pushedTotal=pushed+media.recordsPushed,pulledTotal=pulled+media.recordsPulled;
+        String status="Success · "+pushedTotal+" pushed, "+pulledTotal+" received · "+media.filesUploaded+" file upload"+(media.filesUploaded==1?"":"s")+", "+media.filesDownloaded+" download"+(media.filesDownloaded==1?"":"s");markSyncResult(true,db.now(),status);
+        String message="Synced "+pushedTotal+" local record"+(pushedTotal==1?"":"s")+", received "+pulledTotal+" cloud record"+(pulledTotal==1?"":"s")+" and synchronized "+(media.filesUploaded+media.filesDownloaded)+" media file"+((media.filesUploaded+media.filesDownloaded)==1?"":"s");return new SyncResult(pushedTotal,pulledTotal,message);
     }
 
     private void syncBranding(String workspaceId,boolean canManage)throws Exception{
-        if(canManage){JSONObject b=new JSONObject().put("workspace_id",workspaceId).put("enabled",prefs.getBoolean(BrandingManager.KEY_ENABLED,false)).put("primary_color",prefs.getString(BrandingManager.KEY_PRIMARY,"#464B45")).put("accent_color",prefs.getString(BrandingManager.KEY_ACCENT,"#F99D1C")).put("highlight_color",prefs.getString(BrandingManager.KEY_HIGHLIGHT,"#FFC222"));client.upsert("branding_settings","workspace_id",b);}
-        JSONArray a=client.select("branding_settings","select=enabled,primary_color,accent_color,highlight_color&workspace_id=eq."+workspaceId);if(a.length()>0){JSONObject o=a.getJSONObject(0);prefs.edit().putBoolean(BrandingManager.KEY_ENABLED,o.optBoolean("enabled",false)).putString(BrandingManager.KEY_PRIMARY,o.optString("primary_color","#464B45")).putString(BrandingManager.KEY_ACCENT,o.optString("accent_color","#F99D1C")).putString(BrandingManager.KEY_HIGHLIGHT,o.optString("highlight_color","#FFC222")).apply();}
+        JSONArray remote=client.select("branding_settings","select=enabled,primary_color,accent_color,highlight_color&workspace_id=eq."+workspaceId);boolean dirty=prefs.getBoolean(BrandingManager.KEY_SETTINGS_DIRTY,false);boolean localCustom=prefs.getBoolean(BrandingManager.KEY_ENABLED,false);
+        boolean remoteDefault=remote.length()==0||(!remote.getJSONObject(0).optBoolean("enabled",false)&&"#464B45".equalsIgnoreCase(remote.getJSONObject(0).optString("primary_color","#464B45"))&&"#F99D1C".equalsIgnoreCase(remote.getJSONObject(0).optString("accent_color","#F99D1C"))&&"#FFC222".equalsIgnoreCase(remote.getJSONObject(0).optString("highlight_color","#FFC222")));
+        if(canManage&&(dirty||remote.length()==0||(localCustom&&remoteDefault))){JSONObject b=new JSONObject().put("workspace_id",workspaceId).put("enabled",prefs.getBoolean(BrandingManager.KEY_ENABLED,false)).put("primary_color",prefs.getString(BrandingManager.KEY_PRIMARY,"#464B45")).put("accent_color",prefs.getString(BrandingManager.KEY_ACCENT,"#F99D1C")).put("highlight_color",prefs.getString(BrandingManager.KEY_HIGHLIGHT,"#FFC222"));client.upsert("branding_settings","workspace_id",b);prefs.edit().putBoolean(BrandingManager.KEY_SETTINGS_DIRTY,false).apply();remote=client.select("branding_settings","select=enabled,primary_color,accent_color,highlight_color&workspace_id=eq."+workspaceId);}
+        if(remote.length()>0){JSONObject o=remote.getJSONObject(0);prefs.edit().putBoolean(BrandingManager.KEY_ENABLED,o.optBoolean("enabled",false)).putString(BrandingManager.KEY_PRIMARY,o.optString("primary_color","#464B45")).putString(BrandingManager.KEY_ACCENT,o.optString("accent_color","#F99D1C")).putString(BrandingManager.KEY_HIGHLIGHT,o.optString("highlight_color","#FFC222")).putBoolean(BrandingManager.KEY_SETTINGS_DIRTY,false).apply();}
     }
 
     private JSONObject payload(String type,long id,String workspaceId)throws Exception{
@@ -104,7 +111,8 @@ public class CloudSyncFoundation {
 
     private void copy(JSONObject o,AppDatabase.Row r,String... keys)throws Exception{for(String k:keys)o.put(k,r.s(k));}
     private void putDate(JSONObject o,String key,String value)throws Exception{if(value==null||value.trim().isEmpty())o.put(key,JSONObject.NULL);else o.put(key,value.trim());}
-    private void putRemoteRef(JSONObject o,String key,String type,String local)throws Exception{long id=0;try{id=Long.parseLong(local);}catch(Exception ignored){}if(id<=0)o.put(key,JSONObject.NULL);else o.put(key,db.ensureRemoteUuid(type,id));}
+    private void putRemoteRef(JSONObject o,String key,String type,String local)throws Exception{long id=parseLong(local);if(id<=0)o.put(key,JSONObject.NULL);else o.put(key,db.ensureRemoteUuid(type,id));}
+    private long parseLong(String value){try{return Long.parseLong(value==null?"0":value);}catch(Exception e){return 0;}}
     private String tableFor(String type){if("customer".equals(type))return "customers";if("site".equals(type))return "sites";if("asset".equals(type))return "assets";if("technician".equals(type))return "technicians";if("job".equals(type))return "jobs";return type;}
     private String rpcString(Object raw){if(raw==null)return "";if(raw instanceof String)return ((String)raw).replace("\"","").trim();if(raw instanceof JSONObject)return ((JSONObject)raw).optString("result","");if(raw instanceof JSONArray&&((JSONArray)raw).length()>0)return ((JSONArray)raw).optString(0,"");return String.valueOf(raw).replace("\"","").trim();}
     public void markSyncResult(boolean ok,String when,String message){prefs.edit().putString("cloud_last_sync",when==null?"":when).putString("cloud_last_result",message==null?(ok?"Success":"Failed"):message).apply();}

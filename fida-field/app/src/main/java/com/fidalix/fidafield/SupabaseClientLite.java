@@ -93,6 +93,11 @@ public class SupabaseClientLite {
         request("PATCH",BuildConfig.SUPABASE_URL+"/rest/v1/"+table+"?"+filter,body,true,"Prefer","return=minimal");
     }
 
+    public Object invokeFunction(String function,JSONObject body)throws Exception{
+        String name=function==null?"":function.trim();if(name.isEmpty())throw new Exception("Missing Edge Function name");
+        return request("POST",BuildConfig.SUPABASE_URL+"/functions/v1/"+enc(name),body==null?new JSONObject():body,true,null,null);
+    }
+
     /** Standard Supabase Storage upload. x-upsert makes retries idempotent. */
     public void uploadObject(String bucket,String path,byte[] bytes,String contentType)throws Exception{
         if(bytes==null)throw new Exception("No file data to upload");

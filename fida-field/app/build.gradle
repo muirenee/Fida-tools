@@ -10,10 +10,11 @@ android {
         applicationId 'com.fidalix.fidafield'
         minSdk 26
         targetSdk 36
-        versionCode 14
-        versionName '0.9.11-test'
+        versionCode 15
+        versionName '0.9.12-test'
         buildConfigField 'String', 'SUPABASE_URL', '"https://owxoyxylileuagsnjjht.supabase.co"'
         buildConfigField 'String', 'SUPABASE_PUBLISHABLE_KEY', '"' + (System.getenv('SUPABASE_PUBLISHABLE_KEY') ?: '') + '"'
+        buildConfigField 'boolean', 'OPEN_EDITION', (System.getenv('FIDA_OPEN_EDITION') ?: 'false')
     }
 
     buildFeatures {
@@ -50,4 +51,5 @@ dependencies {
     implementation 'com.google.android.material:material:1.13.0'
     implementation 'com.journeyapps:zxing-android-embedded:4.3.0'
     implementation 'androidx.work:work-runtime:2.10.1'
+    implementation 'com.android.billingclient:billing:9.1.0'
 }

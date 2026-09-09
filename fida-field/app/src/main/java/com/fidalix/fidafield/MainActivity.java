@@ -89,6 +89,7 @@ public class MainActivity extends AppCompatActivity {
     private EntitlementManager entitlements;
     private BrandingManager branding;
     private CloudSyncFoundation cloudSync;
+    private AccountTeamManager accountTeam;
     private FrameLayout content;
     private TextView title, subtitle;
     private BottomNavigationView bottom;
@@ -121,6 +122,7 @@ public class MainActivity extends AppCompatActivity {
         applyBrandingPalette();
         cloudSync=new CloudSyncFoundation(prefs,db);
         cloudSync.deviceId();
+        accountTeam=new AccountTeamManager(prefs,db);
         migrateDefaultTechnician();
         registerLaunchers();
         scheduleMaintenanceReminders();
@@ -292,9 +294,11 @@ public class MainActivity extends AppCompatActivity {
         b.addView(menuCard("Backup & restore","Export or restore all local business data",v->showBackup()));
         b.addView(menuCard("Plan & subscription",entitlements.planName()+" • "+entitlements.usageSummary(),v->showPlan()));
         b.addView(menuCard("Custom branding · Pro",entitlements.isPro()?(branding.isActive()?"Active custom company identity":"Logo, colors and branded PDFs"):"Subscriber feature · upgrade to unlock",v->{if(entitlements.canUseCustomBranding())showBranding();else showUpgradeRequired("Custom branding");}));
-        b.addView(menuCard("Cloud & team sync",cloudSync.pendingChanges()+" local change(s) ready for future sync",v->showCloudSync()));
+        b.addView(menuCard("Account & workspace",accountTeam.hasWorkspace()?accountTeam.workspaceName()+" • "+accountTeam.accountRole():"Set up owner profile and workspace",v->showAccountWorkspace()));
+        b.addView(menuCard("Team members",accountTeam.teamSummary(),v->showTeam()));
+        b.addView(menuCard("Cloud & team sync",cloudSync.backendStatus()+" • "+cloudSync.pendingChanges()+" pending",v->showCloudSync()));
         b.addView(menuCard("Company settings","Brand, technician, report numbering and theme",v->showSettings()));
-        b.addView(section("About"));b.addView(paragraph("Fida Field 0.9.7.1 Test\nA polished, offline-first field service and maintenance manager by Fidalix."));
+        b.addView(section("About"));b.addView(paragraph("Fida Field 0.9.8 Test\nAccount, workspace and team-ready offline field service by Fidalix."));
     }
 
     private void showReports(){
@@ -349,10 +353,37 @@ public class MainActivity extends AppCompatActivity {
         host.removeAllViews();int primary=BrandingManager.parseColor(p,BRAND),accent=BrandingManager.parseColor(a,ACCENT),highlight=BrandingManager.parseColor(h,ACCENT_YELLOW);MaterialCardView card=new MaterialCardView(this);card.setRadius(dp(18));card.setCardBackgroundColor(primary);card.setCardElevation(0);LinearLayout box=new LinearLayout(this);box.setOrientation(LinearLayout.VERTICAL);box.setPadding(dp(16),dp(14),dp(16),dp(14));TextView name=new TextView(this);name.setText(prefs.getString("company_name","Your company"));name.setTextSize(18);name.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);name.setTextColor(onColor(primary));TextView copy=new TextView(this);copy.setText("Service & Maintenance · branded report preview");copy.setTextSize(12);copy.setTextColor(withAlpha(onColor(primary),0.78f));box.addView(name);box.addView(copy);LinearLayout bars=new LinearLayout(this);bars.setOrientation(LinearLayout.HORIZONTAL);bars.setPadding(0,dp(12),0,0);View x=new View(this);x.setBackgroundColor(accent);bars.addView(x,new LinearLayout.LayoutParams(0,dp(7),2));View y=new View(this);y.setBackgroundColor(highlight);bars.addView(y,new LinearLayout.LayoutParams(0,dp(7),1));box.addView(bars);card.addView(box);host.addView(card,new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT));
     }
 
+    private void showAccountWorkspace(){
+        setHeader("Account & Workspace","Identity, ownership & cloud readiness");clear();LinearLayout b=body(page());MaterialButton back=outlineButton("← Back");back.setOnClickListener(v->showMore());b.addView(back);
+        b.addView(section("Workspace"));EditText workspace=input("Workspace / company name",accountTeam.workspaceName().isEmpty()?prefs.getString("company_name","Fidalix Limited"):accountTeam.workspaceName());EditText person=input("Your name",accountTeam.accountName().isEmpty()?prefs.getString("technician_name",""):accountTeam.accountName());EditText email=input("Account email",accountTeam.accountEmail().isEmpty()?prefs.getString("company_email",""):accountTeam.accountEmail());b.addView(workspace);b.addView(person);b.addView(email);
+        MaterialButton save=button(accountTeam.hasWorkspace()?"Save workspace profile":"Create local workspace");save.setOnClickListener(v->{if(val(workspace).isEmpty()){workspace.setError("Workspace name required");return;}if(val(person).isEmpty()){person.setError("Your name required");return;}if(!val(email).isEmpty()&&!android.util.Patterns.EMAIL_ADDRESS.matcher(val(email)).matches()){email.setError("Enter a valid email");return;}accountTeam.saveOwnerWorkspace(val(workspace),val(person),val(email));toast("Workspace profile saved");showAccountWorkspace();});b.addView(save);
+        if(accountTeam.hasWorkspace()){b.addView(section("Current identity"));b.addView(info("Workspace ID",accountTeam.workspaceId()));b.addView(info("Role",accountTeam.accountRole()));b.addView(info("Members",String.valueOf(accountTeam.memberCount())));b.addView(info("Pending invitations",String.valueOf(accountTeam.pendingInviteCount())));}
+        b.addView(section("Cloud account"));b.addView(info("Provider",cloudSync.providerName()));b.addView(info("Backend",cloudSync.backendStatus()));b.addView(info("Signed-in account",cloudSync.accountEmail().isEmpty()?"Not connected":cloudSync.accountEmail()));b.addView(paragraph(cloudSync.backendConfigured()?"The backend is configured. Authentication controls will become active when the Supabase adapter is provisioned for this workspace.":"Your workspace is stored safely on this device and remains fully usable offline. Connect the Supabase integration so authentication, database tables and security policies can be provisioned for real multi-device sync."));MaterialButton sync=outlineButton("Cloud & sync status");sync.setOnClickListener(v->showCloudSync());b.addView(sync);
+    }
+
+    private void showTeam(){
+        setHeader("Team","Workspace members & invitations");clear();LinearLayout b=body(page());MaterialButton back=outlineButton("← Back");back.setOnClickListener(v->showMore());b.addView(back);
+        if(!accountTeam.hasWorkspace()){b.addView(empty("Create your workspace before adding team members."));MaterialButton setup=button("Set up workspace");setup.setOnClickListener(v->showAccountWorkspace());b.addView(setup);return;}
+        b.addView(section(accountTeam.workspaceName()));b.addView(info("Your role",accountTeam.accountRole()));b.addView(info("Team",accountTeam.teamSummary()));
+        if(accountTeam.canManageTeam()){MaterialButton invite=button("+ Invite member");invite.setOnClickListener(v->showInviteDialog());b.addView(invite);}else b.addView(paragraph("Only workspace Owners and Admins can manage members and invitations."));
+        List<AppDatabase.Row> members=db.workspaceMembers(accountTeam.workspaceId());b.addView(section("Members ("+members.size()+")"));if(members.isEmpty())b.addView(empty("No members yet."));for(AppDatabase.Row r:members){String meta=(r.s("email").isEmpty()?"No email":r.s("email"))+" • "+r.s("status");MaterialCardView c=rowCard(r.s("name"),meta,r.s("role"));if(accountTeam.canManageTeam()&&!"Owner".equals(r.s("role")))c.setOnClickListener(v->showMemberDialog(r.id()));b.addView(c);}
+        List<AppDatabase.Row> invites=db.workspaceInvites(accountTeam.workspaceId());b.addView(section("Invitations"));if(invites.isEmpty())b.addView(empty("No invitations queued."));for(AppDatabase.Row r:invites){MaterialCardView c=rowCard(r.s("email"),r.s("role"),r.s("status"));if(accountTeam.canManageTeam()&&"Pending".equals(r.s("status")))c.setOnClickListener(v->new MaterialAlertDialogBuilder(this).setTitle("Pending invitation").setMessage(r.s("email")+" · "+r.s("role")+"\n\nThe invitation will be sent after the cloud backend is connected.").setNegativeButton("Close",null).setPositiveButton("Cancel invitation",(d,w)->{db.cancelWorkspaceInvite(r.id());toast("Invitation cancelled");showTeam();}).show());b.addView(c);}
+    }
+
+    private void showInviteDialog(){
+        if(!accountTeam.canManageTeam()){toast("Owner or Admin access required");return;}LinearLayout f=form();EditText email=input("Email address","");Spinner role=spinner(new String[]{AccountTeamManager.ROLE_ADMIN,AccountTeamManager.ROLE_TECHNICIAN,AccountTeamManager.ROLE_VIEWER});f.addView(email);f.addView(label("Role"));f.addView(role);AlertDialog d=new MaterialAlertDialogBuilder(this).setTitle("Invite team member").setView(scrollForm(f)).setNegativeButton("Cancel",null).setPositiveButton("Queue invitation",null).create();d.setOnShowListener(x->d.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{String e=val(email);if(e.isEmpty()||!android.util.Patterns.EMAIL_ADDRESS.matcher(e).matches()){email.setError("Valid email required");return;}db.saveWorkspaceInvite(accountTeam.workspaceId(),e,String.valueOf(role.getSelectedItem()));d.dismiss();toast(cloudSync.backendConfigured()?"Invitation queued for cloud delivery":"Invitation saved locally until cloud is connected");showTeam();}));d.show();
+    }
+
+    private void showMemberDialog(long id){
+        AppDatabase.Row r=db.getWorkspaceMember(id);if(r.id()==0)return;if("Owner".equals(r.s("role"))){toast("The workspace owner cannot be changed here");return;}LinearLayout f=form();EditText name=input("Name",r.s("name"));EditText email=input("Email",r.s("email"));Spinner role=spinner(new String[]{AccountTeamManager.ROLE_ADMIN,AccountTeamManager.ROLE_TECHNICIAN,AccountTeamManager.ROLE_VIEWER});setSpinner(role,r.s("role"));Spinner status=spinner(new String[]{"Active","Inactive"});setSpinner(status,r.s("status"));f.addView(name);f.addView(email);f.addView(label("Role"));f.addView(role);f.addView(label("Status"));f.addView(status);AlertDialog d=new MaterialAlertDialogBuilder(this).setTitle("Edit member").setView(scrollForm(f)).setNegativeButton("Cancel",null).setPositiveButton("Save",null).create();d.setOnShowListener(x->d.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{if(val(name).isEmpty()){name.setError("Name required");return;}db.saveWorkspaceMember(id,accountTeam.workspaceId(),val(name),val(email),String.valueOf(role.getSelectedItem()),String.valueOf(status.getSelectedItem()));d.dismiss();toast("Member updated");showTeam();}));d.show();
+    }
+
     private void showCloudSync(){
-        setHeader("Cloud & Team Sync","Local sync foundation");clear();LinearLayout b=body(page());MaterialButton back=outlineButton("← Back");back.setOnClickListener(v->showMore());b.addView(back);
-        b.addView(section("This device"));b.addView(info("Device ID",cloudSync.deviceId()));b.addView(info("Pending local changes",String.valueOf(cloudSync.pendingChanges())));b.addView(info("Cloud account","Not connected"));
-        b.addView(section("Current behavior"));b.addView(paragraph("Fida Field records customer, site, asset, job and technician changes in a local sync queue. No data leaves this phone in 0.9.7. The queue and stable device ID prepare the app for authenticated multi-device/team sync in the next cloud phase."));
+        setHeader("Cloud & Team Sync","Offline-first sync status");clear();LinearLayout b=body(page());MaterialButton back=outlineButton("← Back");back.setOnClickListener(v->showMore());b.addView(back);
+        b.addView(section("Workspace"));b.addView(info("Workspace",accountTeam.hasWorkspace()?accountTeam.workspaceName():"Not set up"));b.addView(info("Role",accountTeam.accountRole().isEmpty()?"Local user":accountTeam.accountRole()));b.addView(info("Team",accountTeam.teamSummary()));
+        b.addView(section("Cloud backend"));b.addView(info("Provider",cloudSync.providerName()));b.addView(info("Status",cloudSync.backendStatus()));b.addView(info("Account",cloudSync.accountEmail().isEmpty()?"Not signed in":cloudSync.accountEmail()));b.addView(info("Last sync",cloudSync.lastSync()));b.addView(info("Last result",cloudSync.lastResult()));
+        b.addView(section("This device"));b.addView(info("Device ID",cloudSync.deviceId()));b.addView(info("Pending local changes",String.valueOf(cloudSync.pendingChanges())));b.addView(paragraph("Local changes stay queued until the server acknowledges them. This preserves field work during outages and prevents a failed sync from deleting unsent data."));
+        MaterialButton sync=button("Sync now");sync.setEnabled(cloudSync.backendConfigured()&&cloudSync.signedIn());sync.setOnClickListener(v->toast("Backend adapter provisioning is the next cloud activation step."));b.addView(sync);if(!cloudSync.backendConfigured())b.addView(paragraph("Backend configuration is not installed yet. Connect the Supabase integration so authentication, database tables and security policies can be provisioned, then real sign-in and multi-device synchronization can be activated here."));
         MaterialButton copy=outlineButton("Copy device ID");copy.setOnClickListener(v->{android.content.ClipboardManager cm=(android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE);cm.setPrimaryClip(android.content.ClipData.newPlainText("Fida Field device ID",cloudSync.deviceId()));toast("Device ID copied");});b.addView(copy);
     }
 

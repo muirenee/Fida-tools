@@ -20,7 +20,7 @@ import java.util.Map;
 
 public class AppDatabase extends SQLiteOpenHelper {
     public static final String DB_NAME = "fida_field.db";
-    public static final int DB_VERSION = 3;
+    public static final int DB_VERSION = 4;
 
     public static class Row extends HashMap<String, String> {
         public long id() { try { return Long.parseLong(getOrDefault("id", "0")); } catch (Exception e) { return 0; } }
@@ -45,6 +45,11 @@ public class AppDatabase extends SQLiteOpenHelper {
         db.execSQL("CREATE TABLE technicians (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, role TEXT, phone TEXT, email TEXT, active INTEGER DEFAULT 1, created_at TEXT NOT NULL)");
         db.execSQL("CREATE TABLE sequences (year INTEGER PRIMARY KEY, seq INTEGER NOT NULL)");
         db.execSQL("CREATE TABLE sync_queue (id INTEGER PRIMARY KEY AUTOINCREMENT, entity_type TEXT NOT NULL, entity_id INTEGER NOT NULL, operation TEXT NOT NULL DEFAULT 'upsert', changed_at TEXT NOT NULL, UNIQUE(entity_type,entity_id))");
+        db.execSQL("CREATE TABLE workspace_members (id INTEGER PRIMARY KEY AUTOINCREMENT, workspace_id TEXT NOT NULL, member_uuid TEXT NOT NULL UNIQUE, name TEXT NOT NULL, email TEXT, role TEXT NOT NULL DEFAULT 'Technician', status TEXT NOT NULL DEFAULT 'Active', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)");
+        db.execSQL("CREATE TABLE workspace_invites (id INTEGER PRIMARY KEY AUTOINCREMENT, workspace_id TEXT NOT NULL, invite_uuid TEXT NOT NULL UNIQUE, email TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'Technician', status TEXT NOT NULL DEFAULT 'Pending', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)");
+        db.execSQL("CREATE TABLE sync_metadata (id INTEGER PRIMARY KEY AUTOINCREMENT, entity_type TEXT NOT NULL, entity_id INTEGER NOT NULL, remote_uuid TEXT NOT NULL UNIQUE, server_version INTEGER DEFAULT 0, last_synced_at TEXT, deleted_at TEXT, UNIQUE(entity_type,entity_id))");
+        db.execSQL("CREATE INDEX idx_workspace_members_workspace ON workspace_members(workspace_id,status)");
+        db.execSQL("CREATE INDEX idx_workspace_invites_workspace ON workspace_invites(workspace_id,status)");
         db.execSQL("CREATE INDEX idx_jobs_date ON jobs(job_date)");
         db.execSQL("CREATE INDEX idx_assets_next_service ON assets(next_service)");
     }
@@ -62,6 +67,13 @@ public class AppDatabase extends SQLiteOpenHelper {
             queueExistingForSync(db,"job","jobs",stamp);
             queueExistingForSync(db,"technician","technicians",stamp);
         }
+        if(oldVersion<4){
+            db.execSQL("CREATE TABLE IF NOT EXISTS workspace_members (id INTEGER PRIMARY KEY AUTOINCREMENT, workspace_id TEXT NOT NULL, member_uuid TEXT NOT NULL UNIQUE, name TEXT NOT NULL, email TEXT, role TEXT NOT NULL DEFAULT 'Technician', status TEXT NOT NULL DEFAULT 'Active', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)");
+            db.execSQL("CREATE TABLE IF NOT EXISTS workspace_invites (id INTEGER PRIMARY KEY AUTOINCREMENT, workspace_id TEXT NOT NULL, invite_uuid TEXT NOT NULL UNIQUE, email TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'Technician', status TEXT NOT NULL DEFAULT 'Pending', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)");
+            db.execSQL("CREATE TABLE IF NOT EXISTS sync_metadata (id INTEGER PRIMARY KEY AUTOINCREMENT, entity_type TEXT NOT NULL, entity_id INTEGER NOT NULL, remote_uuid TEXT NOT NULL UNIQUE, server_version INTEGER DEFAULT 0, last_synced_at TEXT, deleted_at TEXT, UNIQUE(entity_type,entity_id))");
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_workspace_members_workspace ON workspace_members(workspace_id,status)");
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_workspace_invites_workspace ON workspace_invites(workspace_id,status)");
+        }
     }
 
     public String today() { return new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new Date()); }
@@ -73,6 +85,22 @@ public class AppDatabase extends SQLiteOpenHelper {
     private void queueSync(String type,long id,String operation){
         if(id<=0)return;ContentValues v=new ContentValues();v.put("entity_type",type);v.put("entity_id",id);v.put("operation",operation==null?"upsert":operation);v.put("changed_at",now());getWritableDatabase().insertWithOnConflict("sync_queue",null,v,SQLiteDatabase.CONFLICT_REPLACE);
     }
+
+    public void ensureOwnerMember(String workspaceId,String name,String email){
+        if(workspaceId==null||workspaceId.isEmpty())return;Row existing=one("SELECT * FROM workspace_members WHERE workspace_id=? AND role='Owner' LIMIT 1",new String[]{workspaceId});
+        ContentValues v=new ContentValues();v.put("workspace_id",workspaceId);v.put("name",name==null||name.trim().isEmpty()?"Workspace owner":name.trim());v.put("email",email==null?"":email.trim());v.put("role","Owner");v.put("status","Active");v.put("updated_at",now());
+        long saved;if(existing.id()>0){saved=existing.id();getWritableDatabase().update("workspace_members",v,"id=?",new String[]{String.valueOf(saved)});}else{v.put("member_uuid",java.util.UUID.randomUUID().toString());v.put("created_at",now());saved=getWritableDatabase().insertOrThrow("workspace_members",null,v);}queueSync("workspace_member",saved,"upsert");
+    }
+    public List<Row> workspaceMembers(String workspaceId){return rows("SELECT * FROM workspace_members WHERE workspace_id=? ORDER BY CASE role WHEN 'Owner' THEN 0 WHEN 'Admin' THEN 1 WHEN 'Technician' THEN 2 ELSE 3 END,name COLLATE NOCASE",new String[]{workspaceId==null?"":workspaceId});}
+    public Row getWorkspaceMember(long id){return one("SELECT * FROM workspace_members WHERE id=?",new String[]{String.valueOf(id)});}
+    public long saveWorkspaceMember(long id,String workspaceId,String name,String email,String role,String status){ContentValues v=new ContentValues();v.put("workspace_id",workspaceId);v.put("name",name);v.put("email",email);v.put("role",role);v.put("status",status);v.put("updated_at",now());long saved=id;if(id==0){v.put("member_uuid",java.util.UUID.randomUUID().toString());v.put("created_at",now());saved=getWritableDatabase().insertOrThrow("workspace_members",null,v);}else getWritableDatabase().update("workspace_members",v,"id=?",new String[]{String.valueOf(id)});queueSync("workspace_member",saved,"upsert");return saved;}
+    public int activeWorkspaceMemberCount(String workspaceId){return (int)count("workspace_members","workspace_id=? AND status='Active'",new String[]{workspaceId});}
+    public List<Row> workspaceInvites(String workspaceId){return rows("SELECT * FROM workspace_invites WHERE workspace_id=? ORDER BY CASE status WHEN 'Pending' THEN 0 ELSE 1 END,created_at DESC",new String[]{workspaceId==null?"":workspaceId});}
+    public int pendingWorkspaceInviteCount(String workspaceId){return (int)count("workspace_invites","workspace_id=? AND status='Pending'",new String[]{workspaceId});}
+    public long saveWorkspaceInvite(String workspaceId,String email,String role){Row old=one("SELECT * FROM workspace_invites WHERE workspace_id=? AND email=? AND status='Pending' LIMIT 1",new String[]{workspaceId,email});ContentValues v=new ContentValues();v.put("workspace_id",workspaceId);v.put("email",email);v.put("role",role);v.put("status","Pending");v.put("updated_at",now());long saved=old.id();if(saved>0)getWritableDatabase().update("workspace_invites",v,"id=?",new String[]{String.valueOf(saved)});else{v.put("invite_uuid",java.util.UUID.randomUUID().toString());v.put("created_at",now());saved=getWritableDatabase().insertOrThrow("workspace_invites",null,v);}queueSync("workspace_invite",saved,"upsert");return saved;}
+    public void cancelWorkspaceInvite(long id){ContentValues v=new ContentValues();v.put("status","Cancelled");v.put("updated_at",now());getWritableDatabase().update("workspace_invites",v,"id=?",new String[]{String.valueOf(id)});queueSync("workspace_invite",id,"upsert");}
+    public String ensureRemoteUuid(String type,long entityId){Row r=one("SELECT remote_uuid FROM sync_metadata WHERE entity_type=? AND entity_id=?",new String[]{type,String.valueOf(entityId)});if(!r.s("remote_uuid").isEmpty())return r.s("remote_uuid");String uuid=java.util.UUID.randomUUID().toString();ContentValues v=new ContentValues();v.put("entity_type",type);v.put("entity_id",entityId);v.put("remote_uuid",uuid);getWritableDatabase().insertWithOnConflict("sync_metadata",null,v,SQLiteDatabase.CONFLICT_IGNORE);return one("SELECT remote_uuid FROM sync_metadata WHERE entity_type=? AND entity_id=?",new String[]{type,String.valueOf(entityId)}).s("remote_uuid");}
+    public List<Row> pendingSyncRows(){return rows("SELECT q.*,m.remote_uuid,m.server_version,m.last_synced_at FROM sync_queue q LEFT JOIN sync_metadata m ON m.entity_type=q.entity_type AND m.entity_id=q.entity_id ORDER BY q.changed_at,q.id",null);}
 
     public long count(String table, String where, String[] args) {
         Cursor c = getReadableDatabase().rawQuery("SELECT COUNT(*) FROM " + table + (where == null || where.isEmpty() ? "" : " WHERE " + where), args);

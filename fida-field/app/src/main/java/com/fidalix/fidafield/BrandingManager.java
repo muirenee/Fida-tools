@@ -26,6 +26,9 @@ public class BrandingManager {
     public static final String KEY_PRIMARY = "custom_primary_color";
     public static final String KEY_ACCENT = "custom_accent_color";
     public static final String KEY_HIGHLIGHT = "custom_highlight_color";
+    public static final String KEY_SETTINGS_DIRTY = "custom_branding_settings_dirty";
+    public static final String KEY_LOGO_DIRTY = "custom_branding_logo_dirty";
+    public static final String KEY_LOGO_REMOTE_PATH = "custom_branding_logo_remote_path";
 
     private final SharedPreferences prefs;
     private final boolean pro;
@@ -65,11 +68,13 @@ public class BrandingManager {
         e.putString(KEY_PRIMARY, normalizeHex(primary, "#464B45"));
         e.putString(KEY_ACCENT, normalizeHex(accent, "#F99D1C"));
         e.putString(KEY_HIGHLIGHT, normalizeHex(highlight, "#FFC222"));
+        e.putBoolean(KEY_SETTINGS_DIRTY,true);
         e.apply();
     }
 
     public void reset(Context context) {
-        prefs.edit().remove(KEY_ENABLED).remove(KEY_PRIMARY).remove(KEY_ACCENT).remove(KEY_HIGHLIGHT).apply();
+        prefs.edit().remove(KEY_ENABLED).remove(KEY_PRIMARY).remove(KEY_ACCENT).remove(KEY_HIGHLIGHT)
+                .putBoolean(KEY_SETTINGS_DIRTY,true).putBoolean(KEY_LOGO_DIRTY,true).apply();
         File f = logoFile(context); if (f.exists()) f.delete();
     }
 
@@ -97,9 +102,10 @@ public class BrandingManager {
         File dir = logoFile(context).getParentFile(); if (dir != null && !dir.exists() && !dir.mkdirs()) throw new Exception("Unable to create branding folder");
         try (FileOutputStream fos = new FileOutputStream(logoFile(context))) { out.compress(Bitmap.CompressFormat.PNG, 100, fos); }
         if (out != src) out.recycle(); src.recycle();
+        prefs.edit().putBoolean(KEY_LOGO_DIRTY,true).apply();
     }
 
-    public void removeLogo(Context context) { File f=logoFile(context); if(f.exists())f.delete(); }
+    public void removeLogo(Context context) { File f=logoFile(context); if(f.exists())f.delete(); prefs.edit().putBoolean(KEY_LOGO_DIRTY,true).apply(); }
 
     public File logoFile(Context context) { return new File(new File(context.getFilesDir(), "branding"), "custom_logo.png"); }
 

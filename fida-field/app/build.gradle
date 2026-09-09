@@ -2,6 +2,8 @@ plugins {
     id 'com.android.application'
 }
 
+def openEdition = (project.findProperty('FIDA_OPEN_EDITION') ?: System.getenv('FIDA_OPEN_EDITION') ?: 'false').toString()
+
 android {
     namespace 'com.fidalix.fidafield'
     compileSdk 36
@@ -14,7 +16,7 @@ android {
         versionName '0.9.12-test'
         buildConfigField 'String', 'SUPABASE_URL', '"https://owxoyxylileuagsnjjht.supabase.co"'
         buildConfigField 'String', 'SUPABASE_PUBLISHABLE_KEY', '"' + (System.getenv('SUPABASE_PUBLISHABLE_KEY') ?: '') + '"'
-        buildConfigField 'boolean', 'OPEN_EDITION', (System.getenv('FIDA_OPEN_EDITION') ?: 'false')
+        buildConfigField 'boolean', 'OPEN_EDITION', openEdition
     }
 
     buildFeatures {

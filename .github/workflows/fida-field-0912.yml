@@ -1,0 +1,115 @@
+name: Fida Field 0.9.12 Billing and Open Edition
+
+on:
+  push:
+    branches: [ fida-field-dev ]
+    paths:
+      - '.github/workflows/fida-field-0912.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fida-field-0912-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - name: Checkout normalized 0.9.11 source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply 0.9.12 People and Billing UI
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .fida-build/apply_0912_ui.py
+          grep -q "versionName '0.9.12-test'" fida-field/app/build.gradle
+          grep -q "versionCode 15" fida-field/app/build.gradle
+          grep -q "billing:9.1.0" fida-field/app/build.gradle
+          grep -q 'OPEN_EDITION' fida-field/app/build.gradle
+          grep -q 'People & Team' fida-field/app/src/main/java/com/fidalix/fidafield/MainActivity.java
+          grep -q 'invokeFunction' fida-field/app/src/main/java/com/fidalix/fidafield/SupabaseClientLite.java
+          grep -q 'class BillingManager' fida-field/app/src/main/java/com/fidalix/fidafield/BillingManager.java
+
+      - name: Verify Supabase build configuration
+        shell: bash
+        env:
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "${SUPABASE_PUBLISHABLE_KEY:-}"
+          case "$SUPABASE_PUBLISHABLE_KEY" in
+            sb_publishable_*) echo 'Supabase publishable key is configured' ;;
+            *) echo 'SUPABASE_PUBLISHABLE_KEY is missing or has the wrong key type' >&2; exit 1 ;;
+          esac
+
+      - name: Reconstruct persistent test signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .fida-signing/fida-field-test.part* | tr -d '\n' | base64 -d > fida-field/app/fida-test.keystore
+          echo 'd407757a25505be46048d30b3b19b85a4abb9b0bf14475b2368e0f2e7e9bac51  fida-field/app/fida-test.keystore' | sha256sum -c -
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      - name: Install Android API 36
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | sort -V | tail -1); fi
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+          "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Build Play edition
+        working-directory: fida-field
+        env:
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          gradle clean :app:assembleDebug -PFIDA_OPEN_EDITION=false --stacktrace
+          cp app/build/outputs/apk/debug/app-debug.apk /tmp/Fida-Field-0.9.12-play-test.apk
+
+      - name: Build Fidalix Open edition
+        working-directory: fida-field
+        env:
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          gradle clean :app:assembleDebug -PFIDA_OPEN_EDITION=true --stacktrace
+          cp app/build/outputs/apk/debug/app-debug.apk /tmp/Fida-Field-0.9.12-open-test.apk
+
+      - name: Upload 0.9.12 APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: Fida-Field-0.9.12-test-apks
+          path: |
+            /tmp/Fida-Field-0.9.12-play-test.apk
+            /tmp/Fida-Field-0.9.12-open-test.apk
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Commit normalized 0.9.12 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f fida-field/app/fida-test.keystore .fida-build/apply_0912_ui.py
+          git config user.name 'Fida Field CI'
+          git config user.email 'actions@users.noreply.github.com'
+          git add -A fida-field .fida-build/apply_0912_ui.py
+          git commit -m 'Fida Field 0.9.12 billing, open edition and People & Team'
+          git push origin HEAD:fida-field-dev

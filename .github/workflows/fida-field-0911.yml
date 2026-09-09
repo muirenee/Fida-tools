@@ -28,7 +28,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          tr -d '\n' < .fida-build/apply_0911.py.gz.b64 | base64 -d > /tmp/apply_0911.py.gz
+          echo 'df4319af775269c217bc751e9a47038889b6d4ea1f0f3eb4be3486db08e5918c  .fida-build/apply_0911.part00' | sha256sum -c -
+          echo '9d6810b4b12454bb28c5809f25f5b9f671330e8de60ea69dfdd9dfee917b8eec  .fida-build/apply_0911.part01' | sha256sum -c -
+          echo '39e0e125207e9ad9a82070f505ba0e94805685050edf0141c8c6a780f5d17ad8  .fida-build/apply_0911.part02' | sha256sum -c -
+          echo '619e90ea773025529a489d6827b424fa4f384d6353e433b83ac63060c82a00a3  .fida-build/apply_0911.part03' | sha256sum -c -
+          echo '55a0f75f57dbfc93964078f6a2990223114f01be7c319335fa1ab705b4eefc4f  .fida-build/apply_0911.part04' | sha256sum -c -
+          echo 'dcfae4b42a29ebf8cd7625f249f9831a60981052e4a9b34a3d85fcd21b21ae16  .fida-build/apply_0911.part05' | sha256sum -c -
+          echo '37c51dbd9bfa3595f0da85878e46dc09a0ed16aaab8dada4402c196ffa95efd4  .fida-build/apply_0911.part06' | sha256sum -c -
+          cat .fida-build/apply_0911.part* > /tmp/apply_0911.b64
+          echo '875a9fe78d38e0d17445b89ce631710426ba426c382aa55f1a842f3591998ee7  /tmp/apply_0911.b64' | sha256sum -c -
+          base64 -d /tmp/apply_0911.b64 > /tmp/apply_0911.py.gz
           echo '94f23173d41447e96d0cb5a4f5751b23627fd866ceaf29350887f5272a0d3be6  /tmp/apply_0911.py.gz' | sha256sum -c -
           gzip -dc /tmp/apply_0911.py.gz > .fida-build/apply_0911.py
           echo '9048e5e02fd04499908c499f68ead71af9914bd47f7a43cb298b36a21f5332dc  .fida-build/apply_0911.py' | sha256sum -c -
@@ -97,9 +106,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rm -f fida-field/app/fida-test.keystore .fida-build/apply_0911.py .fida-build/apply_0911.py.gz.b64
+          rm -f fida-field/app/fida-test.keystore .fida-build/apply_0911.py .fida-build/apply_0911.part*
           git config user.name 'Fida Field CI'
           git config user.email 'actions@users.noreply.github.com'
-          git add -A fida-field .fida-build/apply_0911.py.gz.b64
+          git add -A fida-field .fida-build/apply_0911.part00 .fida-build/apply_0911.part01 .fida-build/apply_0911.part02 .fida-build/apply_0911.part03 .fida-build/apply_0911.part04 .fida-build/apply_0911.part05 .fida-build/apply_0911.part06
           git commit -m 'Fida Field 0.9.11 sync reliability and conflict protection'
           git push origin HEAD:fida-field-dev

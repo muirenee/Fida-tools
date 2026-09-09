@@ -1,0 +1,18 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <style name="Theme.FidaField" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/fidalix_orange</item>
+        <item name="colorOnPrimary">@color/fidalix_charcoal_dark</item>
+        <item name="colorSecondary">@color/fidalix_yellow</item>
+        <item name="colorOnSecondary">@color/fidalix_charcoal_dark</item>
+        <item name="colorTertiary">@color/fidalix_charcoal</item>
+        <item name="colorSurface">@color/fidalix_surface</item>
+        <item name="colorOnSurface">@color/fidalix_on_surface</item>
+        <item name="colorOutline">#C9CDC7</item>
+        <item name="android:windowBackground">@color/fidalix_background</item>
+        <item name="android:statusBarColor">@color/fidalix_charcoal_dark</item>
+        <item name="android:navigationBarColor">@color/fidalix_surface</item>
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+</resources>

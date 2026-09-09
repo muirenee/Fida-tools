@@ -1,0 +1,18 @@
+<resources>
+    <style name="Theme.FidaField" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">#F99D1C</item>
+        <item name="colorOnPrimary">#2F332F</item>
+        <item name="colorSecondary">#FFC222</item>
+        <item name="colorOnSecondary">#2F332F</item>
+        <item name="colorTertiary">#C7CCC5</item>
+        <item name="colorSurface">#222622</item>
+        <item name="colorOnSurface">#F1F3EF</item>
+        <item name="colorOutline">#4A504A</item>
+        <item name="android:windowBackground">#151815</item>
+        <item name="android:statusBarColor">#2F332F</item>
+        <item name="android:navigationBarColor">#222622</item>
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+</resources>

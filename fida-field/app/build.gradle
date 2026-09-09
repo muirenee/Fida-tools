@@ -1,0 +1,47 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.fidalix.fidafield'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId 'com.fidalix.fidafield'
+        minSdk 26
+        targetSdk 36
+        versionCode 9
+        versionName '0.9.7.1-test'
+    }
+
+    signingConfigs {
+        test {
+            storeFile file('fida-test.keystore')
+            storePassword 'FidaFieldTest2026!'
+            keyAlias 'fida-field-test'
+            keyPassword 'FidaFieldTest2026!'
+        }
+    }
+
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.test
+        }
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.7.1'
+    implementation 'com.google.android.material:material:1.13.0'
+    implementation 'com.journeyapps:zxing-android-embedded:4.3.0'
+    implementation 'androidx.work:work-runtime:2.10.1'
+}

@@ -1,0 +1,11 @@
+<resources>
+    <!-- Fidalix palette, sampled from the supplied company logo -->
+    <color name="fidalix_charcoal">#464B45</color>
+    <color name="fidalix_charcoal_dark">#2F332F</color>
+    <color name="fidalix_orange">#F99D1C</color>
+    <color name="fidalix_yellow">#FFC222</color>
+    <color name="fidalix_background">#F5F6F4</color>
+    <color name="fidalix_surface">#FFFFFF</color>
+    <color name="fidalix_on_surface">#2D312D</color>
+    <color name="fidalix_muted">#70756F</color>
+</resources>

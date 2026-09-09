@@ -1,0 +1,44 @@
+name: Fida Field Diagnostic
+
+on:
+  push:
+    branches: [ fida-field-dev ]
+    paths:
+      - '.github/workflows/fida-field-diagnostic.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Reconstruct current source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .fida-build/part*.b64 | tr -d '\n' | base64 -d > fida-field-project.zip
+          unzip -q fida-field-project.zip
+          for v in 0.9.1 0.9.2 0.9.3 0.9.4 0.9.5 0.9.6; do
+            cat .fida-patches/${v}.part* | tr -d '\n' | base64 -d | gzip -d > /tmp/${v}.patch
+            patch -p1 < /tmp/${v}.patch >/dev/null
+          done
+          sed -i '/<item name="colorBackground">/d; /<item name="colorOnBackground">/d' fida-field/app/src/main/res/values/themes.xml
+          sed -i '/<item name="colorBackground">/d; /<item name="colorOnBackground">/d' fida-field/app/src/main/res/values-night/themes.xml
+          cat .fida-patches/0.9.7.part* | tr -d '\n' | base64 -d | gzip -d > /tmp/0.9.7.patch
+          patch -p1 < /tmp/0.9.7.patch >/dev/null
+
+      - name: Inspect More and branding wiring
+        shell: bash
+        run: |
+          set -euo pipefail
+          FILE=fida-field/app/src/main/java/com/fidalix/fidafield/MainActivity.java
+          echo '===== showMore references ====='
+          grep -n -C 12 -E 'showMore|Custom [Bb]randing|showBranding|Plan & [Ss]ubscription|Cloud & [Tt]eam [Ss]ync' "$FILE" || true
+          echo '===== Branding methods ====='
+          grep -n -C 5 -E 'private void showBranding|void showBranding|branding' "$FILE" | head -240 || true

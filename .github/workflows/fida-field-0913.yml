@@ -28,6 +28,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          python3 .fida-build/fix_apply_0913.py
           python3 .fida-build/apply_0913.py
           grep -q "versionName '0.9.13-test'" fida-field/app/build.gradle
           grep -q "versionCode 16" fida-field/app/build.gradle
@@ -108,9 +109,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rm -f fida-field/app/fida-test.keystore .fida-build/apply_0913.py
+          rm -f fida-field/app/fida-test.keystore .fida-build/apply_0913.py .fida-build/fix_apply_0913.py
           git config user.name 'Fida Field CI'
           git config user.email 'actions@users.noreply.github.com'
-          git add -A fida-field .fida-build/apply_0913.py
+          git add -A fida-field .fida-build/apply_0913.py .fida-build/fix_apply_0913.py
           git commit -m 'Fida Field 0.9.13 unified people and workspace billing'
           git push origin HEAD:fida-field-dev

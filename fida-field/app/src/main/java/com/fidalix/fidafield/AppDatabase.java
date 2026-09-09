@@ -20,7 +20,7 @@ import java.util.Map;
 
 public class AppDatabase extends SQLiteOpenHelper {
     public static final String DB_NAME = "fida_field.db";
-    public static final int DB_VERSION = 5;
+    public static final int DB_VERSION = 6;
 
     public static class Row extends HashMap<String, String> {
         public long id() { try { return Long.parseLong(getOrDefault("id", "0")); } catch (Exception e) { return 0; } }
@@ -79,6 +79,12 @@ public class AppDatabase extends SQLiteOpenHelper {
             db.execSQL("ALTER TABLE workspace_invites ADD COLUMN token TEXT");
             db.execSQL("ALTER TABLE workspace_invites ADD COLUMN expires_at TEXT");
         }
+        if(oldVersion<6){
+            String stamp=now();
+            queueExistingForSync(db,"job_photo","job_photos",stamp);
+            queueExistingForSync(db,"maintenance_log","maintenance_logs",stamp);
+            db.execSQL("INSERT OR REPLACE INTO sync_queue(entity_type,entity_id,operation,changed_at) SELECT 'job_signature',id,'upsert',? FROM jobs WHERE signature_path IS NOT NULL AND signature_path<>''",new Object[]{stamp});
+        }
     }
 
     public String today() { return new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new Date()); }
@@ -107,7 +113,7 @@ public class AppDatabase extends SQLiteOpenHelper {
     public String ensureRemoteUuid(String type,long entityId){Row r=one("SELECT remote_uuid FROM sync_metadata WHERE entity_type=? AND entity_id=?",new String[]{type,String.valueOf(entityId)});if(!r.s("remote_uuid").isEmpty())return r.s("remote_uuid");String uuid=java.util.UUID.randomUUID().toString();ContentValues v=new ContentValues();v.put("entity_type",type);v.put("entity_id",entityId);v.put("remote_uuid",uuid);getWritableDatabase().insertWithOnConflict("sync_metadata",null,v,SQLiteDatabase.CONFLICT_IGNORE);return one("SELECT remote_uuid FROM sync_metadata WHERE entity_type=? AND entity_id=?",new String[]{type,String.valueOf(entityId)}).s("remote_uuid");}
     public List<Row> pendingSyncRows(){return rows("SELECT q.*,m.remote_uuid,m.server_version,m.last_synced_at FROM sync_queue q LEFT JOIN sync_metadata m ON m.entity_type=q.entity_type AND m.entity_id=q.entity_id ORDER BY q.changed_at,q.id",null);}
 
-    public long pendingBusinessChanges(){return count("sync_queue","entity_type IN ('customer','site','asset','technician','job')",null);}
+    public long pendingBusinessChanges(){return count("sync_queue","entity_type IN ('customer','site','asset','technician','job','job_photo','maintenance_log','job_signature')",null);}
     public List<Row> pendingBusinessSyncRows(){return rows("SELECT q.*,m.remote_uuid,m.server_version,m.last_synced_at FROM sync_queue q LEFT JOIN sync_metadata m ON m.entity_type=q.entity_type AND m.entity_id=q.entity_id WHERE q.entity_type IN ('customer','site','asset','technician','job') ORDER BY q.changed_at,q.id",null);}
     public Row syncEntity(String type,long id){if("customer".equals(type))return getCustomer(id);if("site".equals(type))return getSite(id);if("asset".equals(type))return getAsset(id);if("technician".equals(type))return getTechnician(id);if("job".equals(type))return one("SELECT * FROM jobs WHERE id=?",new String[]{String.valueOf(id)});return new Row();}
     public long localIdForRemote(String type,String remoteUuid){if(remoteUuid==null||remoteUuid.isEmpty())return 0;Row r=one("SELECT entity_id FROM sync_metadata WHERE entity_type=? AND remote_uuid=?",new String[]{type,remoteUuid});try{return Long.parseLong(r.s("entity_id"));}catch(Exception e){return 0;}}
@@ -258,11 +264,11 @@ public class AppDatabase extends SQLiteOpenHelper {
 
     public void deleteById(String table,long id){getWritableDatabase().delete(table,"id=?",new String[]{String.valueOf(id)});String type=table.endsWith("s")?table.substring(0,table.length()-1):table;queueSync(type,id,"delete");}
 
-    public void addPhoto(long jobId,String uri){ContentValues v=new ContentValues();v.put("job_id",jobId);v.put("uri",uri);v.put("caption","");v.put("created_at",now());getWritableDatabase().insert("job_photos",null,v);queueSync("job",jobId,"upsert");}
+    public void addPhoto(long jobId,String uri){ContentValues v=new ContentValues();v.put("job_id",jobId);v.put("uri",uri);v.put("caption","");v.put("created_at",now());long saved=getWritableDatabase().insert("job_photos",null,v);queueSync("job_photo",saved,"upsert");queueSync("job",jobId,"upsert");}
     public List<Row> photos(long jobId){return rows("SELECT * FROM job_photos WHERE job_id=? ORDER BY id",new String[]{String.valueOf(jobId)});}
-    public void setSignature(long jobId,String path,String signer){ContentValues v=new ContentValues();v.put("signature_path",path);v.put("customer_name_signed",signer);v.put("updated_at",now());getWritableDatabase().update("jobs",v,"id=?",new String[]{String.valueOf(jobId)});queueSync("job",jobId,"upsert");}
+    public void setSignature(long jobId,String path,String signer){ContentValues v=new ContentValues();v.put("signature_path",path);v.put("customer_name_signed",signer);v.put("updated_at",now());getWritableDatabase().update("jobs",v,"id=?",new String[]{String.valueOf(jobId)});queueSync("job",jobId,"upsert");queueSync("job_signature",jobId,"upsert");}
 
-    public void completeMaintenance(long assetId,long jobId,String notes,String nextService){ContentValues v=new ContentValues();v.put("asset_id",assetId);if(jobId>0)v.put("job_id",jobId);v.put("service_date",today());v.put("notes",notes);v.put("next_service",nextService);v.put("created_at",now());getWritableDatabase().insert("maintenance_logs",null,v);if(nextService!=null&&!nextService.isEmpty()){ContentValues a=new ContentValues();a.put("next_service",nextService);getWritableDatabase().update("assets",a,"id=?",new String[]{String.valueOf(assetId)});}queueSync("asset",assetId,"upsert");if(jobId>0)queueSync("job",jobId,"upsert");}
+    public void completeMaintenance(long assetId,long jobId,String notes,String nextService){ContentValues v=new ContentValues();v.put("asset_id",assetId);if(jobId>0)v.put("job_id",jobId);v.put("service_date",today());v.put("notes",notes);v.put("next_service",nextService);v.put("created_at",now());long saved=getWritableDatabase().insert("maintenance_logs",null,v);queueSync("maintenance_log",saved,"upsert");if(nextService!=null&&!nextService.isEmpty()){ContentValues a=new ContentValues();a.put("next_service",nextService);getWritableDatabase().update("assets",a,"id=?",new String[]{String.valueOf(assetId)});}queueSync("asset",assetId,"upsert");if(jobId>0)queueSync("job",jobId,"upsert");}
     public void completeMaintenanceIfNeeded(long assetId,long jobId,String notes,String nextService){if(jobId>0&&count("maintenance_logs","job_id=?",new String[]{String.valueOf(jobId)})>0)return;completeMaintenance(assetId,jobId,notes,nextService);}
 
     public JSONObject exportJson() throws Exception {
@@ -274,7 +280,7 @@ public class AppDatabase extends SQLiteOpenHelper {
 
     public void importJson(JSONObject root) throws Exception {
         String[] tables={"maintenance_logs","job_photos","jobs","assets","sites","customers","technicians","sequences"}; SQLiteDatabase db=getWritableDatabase(); db.beginTransaction();
-        try{for(String t:tables)db.delete(t,null,null);db.delete("sync_queue",null,null);String[] order={"customers","sites","assets","jobs","job_photos","maintenance_logs","technicians","sequences"};for(String t:order){JSONArray arr=root.optJSONArray(t);if(arr==null)continue;for(int i=0;i<arr.length();i++){JSONObject o=arr.getJSONObject(i);ContentValues v=new ContentValues();java.util.Iterator<String> it=o.keys();while(it.hasNext()){String k=it.next();if(o.isNull(k))v.putNull(k);else v.put(k,o.getString(k));}db.insertOrThrow(t,null,v);}}String stamp=now();queueExistingForSync(db,"customer","customers",stamp);queueExistingForSync(db,"site","sites",stamp);queueExistingForSync(db,"asset","assets",stamp);queueExistingForSync(db,"job","jobs",stamp);queueExistingForSync(db,"technician","technicians",stamp);db.setTransactionSuccessful();}finally{db.endTransaction();}
+        try{for(String t:tables)db.delete(t,null,null);db.delete("sync_queue",null,null);String[] order={"customers","sites","assets","jobs","job_photos","maintenance_logs","technicians","sequences"};for(String t:order){JSONArray arr=root.optJSONArray(t);if(arr==null)continue;for(int i=0;i<arr.length();i++){JSONObject o=arr.getJSONObject(i);ContentValues v=new ContentValues();java.util.Iterator<String> it=o.keys();while(it.hasNext()){String k=it.next();if(o.isNull(k))v.putNull(k);else v.put(k,o.getString(k));}db.insertOrThrow(t,null,v);}}String stamp=now();queueExistingForSync(db,"customer","customers",stamp);queueExistingForSync(db,"site","sites",stamp);queueExistingForSync(db,"asset","assets",stamp);queueExistingForSync(db,"job","jobs",stamp);queueExistingForSync(db,"technician","technicians",stamp);queueExistingForSync(db,"job_photo","job_photos",stamp);queueExistingForSync(db,"maintenance_log","maintenance_logs",stamp);db.execSQL("INSERT OR REPLACE INTO sync_queue(entity_type,entity_id,operation,changed_at) SELECT 'job_signature',id,'upsert',? FROM jobs WHERE signature_path IS NOT NULL AND signature_path<>''",new Object[]{stamp});db.setTransactionSuccessful();}finally{db.endTransaction();}
     }
 
     public void insertDemoData() {

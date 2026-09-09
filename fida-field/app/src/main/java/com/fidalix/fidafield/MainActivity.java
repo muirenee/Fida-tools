@@ -120,7 +120,7 @@ public class MainActivity extends AppCompatActivity {
         entitlements=new EntitlementManager(prefs,db);
         branding=new BrandingManager(prefs,entitlements.isPro());
         applyBrandingPalette();
-        cloudSync=new CloudSyncFoundation(prefs,db);
+        cloudSync=new CloudSyncFoundation(this,prefs,db);
         cloudSync.deviceId();
         accountTeam=new AccountTeamManager(prefs,db);
         migrateDefaultTechnician();
@@ -298,7 +298,7 @@ public class MainActivity extends AppCompatActivity {
         b.addView(menuCard("Team members",accountTeam.teamSummary(),v->showTeam()));
         b.addView(menuCard("Cloud & team sync",cloudSync.backendStatus()+" • "+cloudSync.pendingChanges()+" pending",v->showCloudSync()));
         b.addView(menuCard("Company settings","Brand, technician, report numbering and theme",v->showSettings()));
-        b.addView(section("About"));b.addView(paragraph("Fida Field 0.9.9 Test\nLive Supabase account, workspace and offline-first synchronization by Fidalix."));
+        b.addView(section("About"));b.addView(paragraph("Fida Field 0.9.10 Test\nLive Supabase account, workspace and offline-first synchronization by Fidalix."));
     }
 
     private void showReports(){

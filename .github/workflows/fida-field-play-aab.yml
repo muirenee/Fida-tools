@@ -10,12 +10,16 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: fida-field-play-aab-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  build-aab:
+  build:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
-      - name: Checkout source
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Verify Supabase build configuration
@@ -37,32 +41,18 @@ jobs:
           cat .fida-signing/fida-field-test.part* | tr -d '\n' | base64 -d > fida-field/app/fida-test.keystore
           echo 'd407757a25505be46048d30b3b19b85a4abb9b0bf14475b2368e0f2e7e9bac51  fida-field/app/fida-test.keystore' | sha256sum -c -
 
-      - name: Enable release signing for CI bundle
+      - name: Configure signed release bundle
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          p=Path('fida-field/app/build.gradle')
-          s=p.read_text()
-          old="""        release {
-            minifyEnabled false
-"""
-          new="""        release {
-            signingConfig signingConfigs.test
-            minifyEnabled false
-"""
-          if old not in s:
-              raise SystemExit('release buildType anchor not found')
-          p.write_text(s.replace(old,new,1))
-          PY
+          sed -i '/^[[:space:]]*release[[:space:]]*{/a\            signingConfig signingConfigs.test' fida-field/app/build.gradle
           grep -q "applicationId 'com.fidalix.fidafield'" fida-field/app/build.gradle
           grep -q "versionCode 16" fida-field/app/build.gradle
           grep -q "versionName '0.9.13-test'" fida-field/app/build.gradle
-          grep -q "signingConfig signingConfigs.test" fida-field/app/build.gradle
+          grep -q 'signingConfig signingConfigs.test' fida-field/app/build.gradle
 
       - name: Set up Java 17
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
@@ -90,11 +80,11 @@ jobs:
           set -euo pipefail
           gradle clean :app:bundleRelease -PFIDA_OPEN_EDITION=false --stacktrace
           test -f app/build/outputs/bundle/release/app-release.aab
-          jarsigner -verify -verbose -certs app/build/outputs/bundle/release/app-release.aab >/tmp/aab-signature.txt
+          jarsigner -verify app/build/outputs/bundle/release/app-release.aab
           cp app/build/outputs/bundle/release/app-release.aab /tmp/Fida-Field-0.9.13-play-release.aab
           sha256sum /tmp/Fida-Field-0.9.13-play-release.aab
 
-      - name: Upload signed AAB
+      - name: Upload AAB
         uses: actions/upload-artifact@v4
         with:
           name: Fida-Field-0.9.13-play-release-aab

@@ -1,0 +1,177 @@
+name: Fida Field 0.9.14 Completed Job Lock
+
+on:
+  push:
+    branches: [ fida-field-dev ]
+    paths:
+      - '.github/workflows/fida-field-0914.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify Supabase build configuration
+        shell: bash
+        env:
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "${SUPABASE_PUBLISHABLE_KEY:-}"
+          case "$SUPABASE_PUBLISHABLE_KEY" in
+            sb_publishable_*) echo 'Supabase publishable key is configured' ;;
+            *) echo 'SUPABASE_PUBLISHABLE_KEY is missing or has the wrong key type' >&2; exit 1 ;;
+          esac
+
+      - name: Apply completed-job permission UI and version bump
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          java=Path('fida-field/app/src/main/java/com/fidalix/fidafield/MainActivity.java')
+          s=java.read_text()
+
+          old='        AppDatabase.Row r=id>0?db.getJob(id):new AppDatabase.Row();AppDatabase.Row ar=preferredAsset>0?db.getAsset(preferredAsset):new AppDatabase.Row();'
+          new='''        AppDatabase.Row r=id>0?db.getJob(id):new AppDatabase.Row();\n        if(id>0&&"Completed".equals(r.s("status"))&&!accountTeam.canManageTeam()){new MaterialAlertDialogBuilder(this).setTitle("Completed job locked").setMessage("Only an Owner or Admin can modify a completed service job.").setPositiveButton("OK",null).show();return;}\n        AppDatabase.Row ar=preferredAsset>0?db.getAsset(preferredAsset):new AppDatabase.Row();'''
+          assert old in s, 'showJobDialog anchor not found'
+          s=s.replace(old,new,1)
+
+          old='MaterialButton edit=button("Edit");edit.setOnClickListener(v->showJobDialog(id,0));top.addView(edit,new LinearLayout.LayoutParams(0,dp(48),1));b.addView(top);'
+          new='''boolean completed="Completed".equals(j.s("status"));boolean canModify=!completed||accountTeam.canManageTeam();if(canModify){MaterialButton edit=button("Edit");edit.setOnClickListener(v->showJobDialog(id,0));top.addView(edit,new LinearLayout.LayoutParams(0,dp(48),1));}b.addView(top);if(completed&&!canModify)b.addView(empty("Locked — only an Owner or Admin can modify this completed service job."));'''
+          assert old in s, 'showJobDetail edit anchor not found'
+          s=s.replace(old,new,1)
+
+          old='LinearLayout a=new LinearLayout(this);a.setOrientation(LinearLayout.HORIZONTAL);MaterialButton photo=outlineButton("Add photo");photo.setOnClickListener(v->capturePhoto(id));a.addView(photo,new LinearLayout.LayoutParams(0,dp(50),1));a.addView(spacerH());MaterialButton sig=outlineButton("Signature");sig.setOnClickListener(v->captureSignature(id));a.addView(sig,new LinearLayout.LayoutParams(0,dp(50),1));b.addView(a);'
+          new='''if(canModify){LinearLayout a=new LinearLayout(this);a.setOrientation(LinearLayout.HORIZONTAL);MaterialButton photo=outlineButton("Add photo");photo.setOnClickListener(v->capturePhoto(id));a.addView(photo,new LinearLayout.LayoutParams(0,dp(50),1));a.addView(spacerH());MaterialButton sig=outlineButton("Signature");sig.setOnClickListener(v->captureSignature(id));a.addView(sig,new LinearLayout.LayoutParams(0,dp(50),1));b.addView(a);}else b.addView(paragraph("Photos and customer signature are locked with the completed job. Ask an Owner or Admin if a correction is required."));'''
+          assert old in s, 'evidence action anchor not found'
+          s=s.replace(old,new,1)
+
+          s=s.replace('Fida Field 0.9.13 Test\\nReliable Supabase sync, media, tombstones and conflict protection by Fidalix.', 'Fida Field 0.9.14 Test\\nCompleted-job role locking, workspace billing and reliable Supabase sync by Fidalix.', 1)
+          java.write_text(s)
+
+          gradle=Path('fida-field/app/build.gradle')
+          g=gradle.read_text()
+          assert 'versionCode 16' in g and "versionName '0.9.13-test'" in g, 'version anchors not found'
+          g=g.replace('versionCode 16','versionCode 17',1).replace("versionName '0.9.13-test'","versionName '0.9.14-test'",1)
+          gradle.write_text(g)
+          PY
+          grep -q 'Completed job locked' fida-field/app/src/main/java/com/fidalix/fidafield/MainActivity.java
+          grep -q 'only an Owner or Admin can modify this completed service job' fida-field/app/src/main/java/com/fidalix/fidafield/MainActivity.java
+          grep -q "versionCode 17" fida-field/app/build.gradle
+          grep -q "versionName '0.9.14-test'" fida-field/app/build.gradle
+
+      - name: Reconstruct persistent signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .fida-signing/fida-field-test.part* | tr -d '\n' | base64 -d > fida-field/app/fida-test.keystore
+          echo 'd407757a25505be46048d30b3b19b85a4abb9b0bf14475b2368e0f2e7e9bac51  fida-field/app/fida-test.keystore' | sha256sum -c -
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      - name: Install Android API 36
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | sort -V | tail -1); fi
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+          "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Build Fidalix Open test APK
+        working-directory: fida-field
+        env:
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          set -euo pipefail
+          gradle :app:assembleDebug -PFIDA_OPEN_EDITION=true --stacktrace
+          cp app/build/outputs/apk/debug/app-debug.apk /tmp/Fida-Field-0.9.14-open-test.apk
+          sha256sum /tmp/Fida-Field-0.9.14-open-test.apk
+
+      - name: Configure release signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('fida-field/app/build.gradle')
+          s=p.read_text()
+          old='''        release {\n            minifyEnabled false\n'''
+          new='''        release {\n            signingConfig signingConfigs.test\n            minifyEnabled false\n'''
+          assert old in s, 'release signing anchor not found'
+          p.write_text(s.replace(old,new,1))
+          PY
+
+      - name: Build signed Play release AAB
+        working-directory: fida-field
+        env:
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          set -euo pipefail
+          gradle :app:bundleRelease -PFIDA_OPEN_EDITION=false --stacktrace
+          test -f app/build/outputs/bundle/release/app-release.aab
+          jarsigner -verify -verbose -certs app/build/outputs/bundle/release/app-release.aab >/tmp/aab-signature.txt
+          cp app/build/outputs/bundle/release/app-release.aab /tmp/Fida-Field-0.9.14-play-release.aab
+          sha256sum /tmp/Fida-Field-0.9.14-play-release.aab
+
+      - name: Restore normalized build file
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('fida-field/app/build.gradle')
+          s=p.read_text()
+          s=s.replace('''        release {\n            signingConfig signingConfigs.test\n            minifyEnabled false\n''','''        release {\n            minifyEnabled false\n''',1)
+          p.write_text(s)
+          PY
+          rm -f fida-field/app/fida-test.keystore
+
+      - name: Upload Open APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Fida-Field-0.9.14-open-test-apk
+          path: /tmp/Fida-Field-0.9.14-open-test.apk
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Upload Play AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: Fida-Field-0.9.14-play-release-aab
+          path: /tmp/Fida-Field-0.9.14-play-release.aab
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Commit normalized source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Fida Field CI'
+          git config user.email 'actions@users.noreply.github.com'
+          git add fida-field
+          if git diff --cached --quiet; then
+            echo 'Normalized source already present.'
+            exit 0
+          fi
+          git commit -m 'Fida Field 0.9.14 lock completed jobs by role'
+          git push origin HEAD:fida-field-dev

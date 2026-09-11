@@ -221,6 +221,21 @@ public class AppDatabase extends SQLiteOpenHelper {
         for(Row member:workspaceMembers(workspaceId)){String user=member.s("user_uuid"),email=member.s("email").trim();if(user.isEmpty()||email.isEmpty()||technicianForUser(user).id()>0)continue;List<Row> candidates=rows("SELECT * FROM technicians WHERE (user_uuid IS NULL OR user_uuid='') AND email<>'' AND lower(trim(email))=lower(trim(?))",new String[]{email});if(candidates.size()==1){linkTechnicianToMember(candidates.get(0).id(),member.id());linked++;}}
         return linked;
     }
+    public long reconcileTechnicianIdentity(long sourceId,long targetId,String remoteUuid){
+        if(sourceId<=0)return targetId;if(targetId<=0||sourceId==targetId){bindRemoteUuid("technician",sourceId,remoteUuid);return sourceId;}
+        Row src=getTechnician(sourceId),target=getTechnician(targetId);if(src.id()==0){bindRemoteUuid("technician",targetId,remoteUuid);return targetId;}if(target.id()==0){bindRemoteUuid("technician",sourceId,remoteUuid);return sourceId;}
+        SQLiteDatabase d=getWritableDatabase();d.beginTransaction();try{
+            ContentValues v=new ContentValues();v.put("name",src.s("name"));v.put("role",src.s("role"));v.put("phone",src.s("phone"));v.put("email",src.s("email"));String user=src.s("user_uuid");if(user.isEmpty())v.putNull("user_uuid");else v.put("user_uuid",user);v.put("active",src.i("active"));d.update("technicians",v,"id=?",new String[]{String.valueOf(targetId)});
+            ContentValues jv=new ContentValues();jv.put("technician_id",targetId);jv.put("technician",src.s("name"));d.update("jobs",jv,"technician_id=?",new String[]{String.valueOf(sourceId)});
+            ContentValues fv=new ContentValues();fv.put("from_technician_id",targetId);d.update("job_assignment_history",fv,"from_technician_id=?",new String[]{String.valueOf(sourceId)});ContentValues tv=new ContentValues();tv.put("to_technician_id",targetId);d.update("job_assignment_history",tv,"to_technician_id=?",new String[]{String.valueOf(sourceId)});
+            d.delete("sync_queue","entity_type='technician' AND entity_id=?",new String[]{String.valueOf(sourceId)});d.delete("sync_conflicts","entity_type='technician' AND entity_id=?",new String[]{String.valueOf(sourceId)});d.delete("sync_metadata","entity_type='technician' AND entity_id=?",new String[]{String.valueOf(sourceId)});d.delete("technicians","id=?",new String[]{String.valueOf(sourceId)});
+            Row meta=one("SELECT id FROM sync_metadata WHERE entity_type='technician' AND entity_id=?",new String[]{String.valueOf(targetId)});ContentValues mv=new ContentValues();mv.put("remote_uuid",remoteUuid);if(meta.id()>0)d.update("sync_metadata",mv,"id=?",new String[]{String.valueOf(meta.id())});else{mv.put("entity_type","technician");mv.put("entity_id",targetId);d.insertOrThrow("sync_metadata",null,mv);}
+            ContentValues qv=new ContentValues();qv.put("entity_type","technician");qv.put("entity_id",targetId);qv.put("operation","upsert");qv.put("changed_at",now());d.insertWithOnConflict("sync_queue",null,qv,SQLiteDatabase.CONFLICT_REPLACE);
+            d.setTransactionSuccessful();
+        }finally{d.endTransaction();}
+        return targetId;
+    }
+
     public List<Row> jobsForAsset(long assetId){return rows("SELECT j.*,c.name customer_name FROM jobs j LEFT JOIN customers c ON c.id=j.customer_id WHERE j.asset_id=? ORDER BY j.job_date DESC,j.id DESC",new String[]{String.valueOf(assetId)});}
     public List<Row> maintenanceForAsset(long assetId){return rows("SELECT m.*,j.report_no,j.title job_title FROM maintenance_logs m LEFT JOIN jobs j ON j.id=m.job_id WHERE m.asset_id=? ORDER BY m.service_date DESC,m.id DESC",new String[]{String.valueOf(assetId)});}
     public String suggestNextService(long assetId,String fromDate){Row a=getAsset(assetId);int days=a.i("interval_days");if(days<=0)return "";try{SimpleDateFormat f=new SimpleDateFormat("yyyy-MM-dd",Locale.US);Date d=f.parse(fromDate==null||fromDate.isEmpty()?today():fromDate);Calendar c=Calendar.getInstance();c.setTime(d==null?new Date():d);c.add(Calendar.DAY_OF_YEAR,days);return f.format(c.getTime());}catch(Exception e){return "";}}

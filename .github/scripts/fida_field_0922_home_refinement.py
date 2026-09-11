@@ -73,3 +73,5 @@ p = Path('fida-field/app/build.gradle')
 s = p.read_text()
 s = replace_once(s, "        versionCode 24\n        versionName '0.9.21-test'\n", "        versionCode 25\n        versionName '0.9.22-test'\n", 'version bump')
 p.write_text(s)
+
+# Trigger marker for the 0.9.22 build workflow.

@@ -46,6 +46,14 @@ public class CloudSyncFoundation {
 
     public SupabaseClientLite.AuthResult signUp(String name,String email,String password)throws Exception{return client.signUp(name,email,password);}
     public SupabaseClientLite.AuthResult signIn(String email,String password)throws Exception{return client.signIn(email,password);}
+    public WorkspaceMembership registerInvitedUser(String token,String name,String password)throws Exception{
+        Object raw=client.invokePublicFunction("register-invited-user",new JSONObject().put("token",token==null?"":token.trim()).put("name",name==null?"":name.trim()).put("password",password));
+        if(!(raw instanceof JSONObject))throw new Exception("Invitation registration returned an unexpected response");
+        JSONObject o=(JSONObject)raw;if(!o.optBoolean("ok",false))throw new Exception(o.optString("message","Could not create invited account"));
+        String email=o.optString("email","");if(email.isEmpty())throw new Exception("Invitation email was not returned");
+        client.signIn(email,password);
+        return new WorkspaceMembership(o.optString("workspace_id",""),o.optString("workspace_name","Workspace"),AccountTeamManager.normalizeRole(o.optString("role","technician")));
+    }
     public void signOut()throws Exception{client.signOut();}
 
     public WorkspaceMembership firstWorkspace()throws Exception{

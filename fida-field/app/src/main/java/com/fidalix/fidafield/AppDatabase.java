@@ -242,7 +242,7 @@ public class AppDatabase extends SQLiteOpenHelper {
     public String suggestNextService(long assetId,String fromDate){Row a=getAsset(assetId);int days=a.i("interval_days");if(days<=0)return "";try{SimpleDateFormat f=new SimpleDateFormat("yyyy-MM-dd",Locale.US);Date d=f.parse(fromDate==null||fromDate.isEmpty()?today():fromDate);Calendar c=Calendar.getInstance();c.setTime(d==null?new Date():d);c.add(Calendar.DAY_OF_YEAR,days);return f.format(c.getTime());}catch(Exception e){return "";}}
 
     public Row getJob(long id) {
-        return one("SELECT j.*, c.name customer_name, s.name site_name, a.name asset_name, a.tag asset_tag FROM jobs j LEFT JOIN customers c ON c.id=j.customer_id LEFT JOIN sites s ON s.id=j.site_id LEFT JOIN assets a ON a.id=j.asset_id WHERE j.id=?", new String[]{String.valueOf(id)});
+        return one("SELECT j.*, c.name customer_name, c.contact customer_contact, c.phone customer_phone, c.email customer_email, c.address customer_address, s.name site_name, s.contact site_contact, s.phone site_phone, s.address site_address, a.name asset_name, a.tag asset_tag FROM jobs j LEFT JOIN customers c ON c.id=j.customer_id LEFT JOIN sites s ON s.id=j.site_id LEFT JOIN assets a ON a.id=j.asset_id WHERE j.id=?", new String[]{String.valueOf(id)});
     }
 
     public List<Row> customers() { return rows("SELECT * FROM customers ORDER BY name COLLATE NOCASE", null); }

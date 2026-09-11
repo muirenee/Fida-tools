@@ -93,6 +93,7 @@ public class CloudSyncFoundation {
     public boolean lastInviteEmailSent(){return prefs.getBoolean("cloud_last_invite_email_sent",false);}
     public String lastInviteEmailMessage(){return prefs.getString("cloud_last_invite_email_message","Invitation created");}
     public void cancelInvite(String inviteId)throws Exception{client.rpc("cancel_workspace_invite",new JSONObject().put("p_invite_id",inviteId));}
+    public void clearCancelledInvites(String workspaceId)throws Exception{client.rpc("clear_cancelled_workspace_invites",new JSONObject().put("p_workspace_id",workspaceId));}
     public void updateMember(String workspaceId,String memberId,String role,String status)throws Exception{
         client.rpc("update_workspace_member",new JSONObject().put("p_workspace_id",workspaceId).put("p_member_id",memberId).put("p_role",role.toLowerCase()).put("p_status",status.toLowerCase()));
     }

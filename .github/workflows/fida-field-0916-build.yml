@@ -36,8 +36,8 @@ jobs:
       - name: Verify source
         run: |
           grep -q 'sendInviteEmail' fida-field/app/src/main/java/com/fidalix/fidafield/CloudSyncFoundation.java
-          grep -q 'Creating and sending invitation' fida-field/app/src/main/java/com/fidalix/fidafield/MainActivity.java
-          grep -q 'Retry email' fida-field/app/src/main/java/com/fidalix/fidafield/MainActivity.java
+          grep -q 'lastInviteEmailSent' fida-field/app/src/main/java/com/fidalix/fidafield/CloudSyncFoundation.java
+          grep -q 'cloudSync.lastInviteEmailMessage' fida-field/app/src/main/java/com/fidalix/fidafield/MainActivity.java
           grep -q 'versionCode 19' fida-field/app/build.gradle
           grep -q "versionName '0.9.16-test'" fida-field/app/build.gradle
 

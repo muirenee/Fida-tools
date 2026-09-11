@@ -1,5 +1,6 @@
 from pathlib import Path
 
+# Build trigger after workflow registration.
 
 def require_replace(text, old, new, label):
     if new in text:

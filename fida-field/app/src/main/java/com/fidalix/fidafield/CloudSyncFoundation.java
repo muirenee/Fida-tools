@@ -68,8 +68,22 @@ public class CloudSyncFoundation {
     }
 
     public String createInvite(String workspaceId,String email,String role)throws Exception{
-        JSONObject b=new JSONObject().put("p_workspace_id",workspaceId).put("p_email",email).put("p_role",role.toLowerCase());return rpcString(client.rpc("create_workspace_invite",b));
+        JSONObject b=new JSONObject().put("p_workspace_id",workspaceId).put("p_email",email).put("p_role",role.toLowerCase());
+        String token=rpcString(client.rpc("create_workspace_invite",b));
+        boolean sent=false;String message="Invitation created. Share the code manually if email delivery is unavailable.";
+        try{JSONObject delivery=sendInviteEmail(token);sent=delivery.optBoolean("sent",false);message=delivery.optString("message",message);}catch(Exception e){message="Invitation created, but email delivery failed: "+e.getMessage();}
+        prefs.edit().putBoolean("cloud_last_invite_email_sent",sent).putString("cloud_last_invite_email_message",message).apply();
+        return token;
     }
+
+    public JSONObject sendInviteEmail(String token)throws Exception{
+        Object raw=client.invokeFunction("send-workspace-invite",new JSONObject().put("token",token==null?"":token.trim()));
+        if(raw instanceof JSONObject)return (JSONObject)raw;
+        return new JSONObject().put("sent",false).put("message","Invitation email service returned an unexpected response");
+    }
+
+    public boolean lastInviteEmailSent(){return prefs.getBoolean("cloud_last_invite_email_sent",false);}
+    public String lastInviteEmailMessage(){return prefs.getString("cloud_last_invite_email_message","Invitation created");}
     public void cancelInvite(String inviteId)throws Exception{client.rpc("cancel_workspace_invite",new JSONObject().put("p_invite_id",inviteId));}
     public void updateMember(String workspaceId,String memberId,String role,String status)throws Exception{
         client.rpc("update_workspace_member",new JSONObject().put("p_workspace_id",workspaceId).put("p_member_id",memberId).put("p_role",role.toLowerCase()).put("p_status",status.toLowerCase()));

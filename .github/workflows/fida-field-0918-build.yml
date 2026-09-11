@@ -1,4 +1,5 @@
 name: Fida Field 0.9.18 Technician Sync Identity Fix
+# Build retry after workflow registration
 
 on:
   push:

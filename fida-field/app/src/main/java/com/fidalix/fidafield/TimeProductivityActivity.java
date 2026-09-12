@@ -14,6 +14,10 @@ import android.widget.Spinner;
 import android.widget.TextView;
 
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
 
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.card.MaterialCardView;
@@ -40,6 +44,8 @@ public class TimeProductivityActivity extends AppCompatActivity {
 
     @Override protected void onCreate(Bundle state){
         super.onCreate(state);
+        WindowCompat.setDecorFitsSystemWindows(getWindow(),false);
+        WindowCompat.getInsetsController(getWindow(),getWindow().getDecorView()).setAppearanceLightStatusBars(false);
         prefs=getSharedPreferences("fida_field_prefs",MODE_PRIVATE);
         db=new AppDatabase(this);
         accountTeam=new AccountTeamManager(prefs,db);
@@ -50,18 +56,26 @@ public class TimeProductivityActivity extends AppCompatActivity {
 
     private void buildUi(){
         LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setBackgroundColor(0xFFF5F6F4);
-        LinearLayout bar=new LinearLayout(this);bar.setGravity(Gravity.CENTER_VERTICAL);bar.setPadding(dp(14),dp(10),dp(14),dp(10));bar.setBackgroundColor(primary);
+        final int barLeft=dp(14),barTop=dp(10),barRight=dp(14),barBottom=dp(10);
+        LinearLayout bar=new LinearLayout(this);bar.setGravity(Gravity.CENTER_VERTICAL);bar.setPadding(barLeft,barTop,barRight,barBottom);bar.setBackgroundColor(primary);
         MaterialButton back=new MaterialButton(this);back.setText("←");back.setAllCaps(false);back.setTextColor(Color.WHITE);back.setBackgroundColor(Color.TRANSPARENT);back.setOnClickListener(v->finish());bar.addView(back,new LinearLayout.LayoutParams(dp(54),dp(44)));
         LinearLayout titles=new LinearLayout(this);titles.setOrientation(LinearLayout.VERTICAL);TextView title=text("Time & productivity",20,Color.WHITE,true);TextView sub=text("Active service work summary",12,0xFFD6DAD5,false);titles.addView(title);titles.addView(sub);bar.addView(titles,new LinearLayout.LayoutParams(0,ViewGroup.LayoutParams.WRAP_CONTENT,1));root.addView(bar);
         View stripe=new View(this);stripe.setBackgroundColor(accent);root.addView(stripe,new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,dp(3)));
 
-        ScrollView scroll=new ScrollView(this);LinearLayout body=new LinearLayout(this);body.setOrientation(LinearLayout.VERTICAL);body.setPadding(dp(18),dp(18),dp(18),dp(36));scroll.addView(body);root.addView(scroll,new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,0,1));
+        ScrollView scroll=new ScrollView(this);scroll.setClipToPadding(false);LinearLayout body=new LinearLayout(this);body.setOrientation(LinearLayout.VERTICAL);body.setPadding(dp(18),dp(18),dp(18),dp(36));scroll.addView(body);root.addView(scroll,new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,0,1));
         body.addView(note("Active service time is calculated from Start / Pause / Resume work sessions. Paused time, overnight gaps and waiting periods are excluded."));
         body.addView(label("Period"));period=spinner(new String[]{"Last 7 days","Last 30 days","This year","All dates"});period.setSelection(1);body.addView(period);
         body.addView(label("Technician"));technician=spinner(technicianValues());body.addView(technician);
         results=new LinearLayout(this);results.setOrientation(LinearLayout.VERTICAL);body.addView(results);
         AdapterView.OnItemSelectedListener listener=new AdapterView.OnItemSelectedListener(){public void onItemSelected(AdapterView<?>p,View v,int pos,long id){render();}public void onNothingSelected(AdapterView<?>p){}};period.setOnItemSelectedListener(listener);technician.setOnItemSelectedListener(listener);
-        setContentView(root);render();
+
+        ViewCompat.setOnApplyWindowInsetsListener(root,(v,insets)->{
+            Insets safe=insets.getInsets(WindowInsetsCompat.Type.systemBars()|WindowInsetsCompat.Type.displayCutout());
+            bar.setPadding(barLeft,barTop+safe.top,barRight,barBottom);
+            scroll.setPadding(0,0,0,safe.bottom);
+            return insets;
+        });
+        setContentView(root);ViewCompat.requestApplyInsets(root);render();
     }
 
     private String[] technicianValues(){

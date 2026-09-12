@@ -571,7 +571,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void showServiceChecklist(EditText work){
         String[] types={"Preventive maintenance","Corrective maintenance","Installation / commissioning","Inspection / site survey"};
-        new MaterialAlertDialogBuilder(this).setTitle("Service checklist").setMessage("Choose a checklist. Only tick actions you actually performed; selected items are added to Work performed and remain editable.").setItems(types,(d,which)->{
+        new MaterialAlertDialogBuilder(this).setTitle("Choose service checklist").setItems(types,(d,which)->{
             if(which==0)showServiceChecklistItems("Preventive maintenance",new String[]{"Visual condition inspected","Connections and cabling checked","Equipment cleaned or housekeeping completed","Operational test completed","Alarms and indicators checked","Maintenance findings recorded"},work);
             else if(which==1)showServiceChecklistItems("Corrective maintenance",new String[]{"Fault symptoms verified","Fault source isolated","Repair or replacement completed","Connections restored and secured","Operational test completed","Final operating condition verified"},work);
             else if(which==2)showServiceChecklistItems("Installation / commissioning",new String[]{"Equipment installed or mounted","Power and cabling connected","Configuration completed","Network or service connectivity tested","Functional test completed","Labelling or handover completed"},work);

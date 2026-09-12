@@ -184,6 +184,11 @@ public class CloudSyncFoundation {
         client.rpc("update_workspace_member",new JSONObject().put("p_workspace_id",workspaceId).put("p_member_id",memberId).put("p_role",role.toLowerCase()).put("p_status",status.toLowerCase()));
     }
 
+    public void removeWorkspacePerson(String workspaceId,String memberId)throws Exception{
+        if(!backendConfigured())throw new Exception("Supabase backend is not configured");if(!signedIn())throw new Exception("Please sign in first");if(workspaceId==null||workspaceId.trim().isEmpty())throw new Exception("Cloud workspace is not bound");if(memberId==null||memberId.trim().isEmpty())throw new Exception("Workspace member ID is missing");
+        client.rpc("remove_workspace_person",new JSONObject().put("p_workspace_id",workspaceId.trim()).put("p_member_id",memberId.trim()));
+    }
+
     public void refreshTeamCache(String workspaceId,boolean canManage)throws Exception{
         Object membersRaw=client.rpc("list_workspace_members",new JSONObject().put("p_workspace_id",workspaceId));JSONArray members=membersRaw instanceof JSONArray?(JSONArray)membersRaw:new JSONArray();JSONArray invites=new JSONArray();
         if(canManage){Object invitesRaw=client.rpc("list_workspace_invites",new JSONObject().put("p_workspace_id",workspaceId));if(invitesRaw instanceof JSONArray)invites=(JSONArray)invitesRaw;}

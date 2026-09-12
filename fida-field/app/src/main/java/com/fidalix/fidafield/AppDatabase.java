@@ -227,6 +227,16 @@ public class AppDatabase extends SQLiteOpenHelper {
         ContentValues v=cv(m,"name","role","phone","email");if(m.containsKey("user_uuid")){String u=m.get("user_uuid");if(u==null||u.trim().isEmpty())v.putNull("user_uuid");else v.put("user_uuid",u.trim());}putInt(v,"active",m.get("active"));long saved=id;
         if(id==0){v.put("created_at",now());saved=getWritableDatabase().insertOrThrow("technicians",null,v);}else getWritableDatabase().update("technicians",v,"id=?",new String[]{String.valueOf(id)});queueSync("technician",saved,"upsert");return saved;
     }
+    public void deletePersonTechnician(long technicianId){
+        if(technicianId<=0)return;Row tech=getTechnician(technicianId);if(tech.id()==0)return;SQLiteDatabase d=getWritableDatabase();d.beginTransaction();
+        try{
+            for(Row j:rows("SELECT id FROM jobs WHERE technician_id=?",new String[]{String.valueOf(technicianId)})){ContentValues v=new ContentValues();v.putNull("technician_id");d.update("jobs",v,"id=?",new String[]{String.valueOf(j.id())});queueSync("job",j.id(),"upsert");}
+            ContentValues from=new ContentValues();from.putNull("from_technician_id");d.update("job_assignment_history",from,"from_technician_id=?",new String[]{String.valueOf(technicianId)});ContentValues to=new ContentValues();to.putNull("to_technician_id");d.update("job_assignment_history",to,"to_technician_id=?",new String[]{String.valueOf(technicianId)});
+            queueSync("technician",technicianId,"delete");d.delete("sync_conflicts","entity_type='technician' AND entity_id=?",new String[]{String.valueOf(technicianId)});d.delete("technicians","id=?",new String[]{String.valueOf(technicianId)});d.setTransactionSuccessful();
+        }finally{d.endTransaction();}
+    }
+    public void deleteWorkspaceMemberLocal(long memberId){if(memberId<=0)return;getWritableDatabase().delete("workspace_members","id=?",new String[]{String.valueOf(memberId)});}
+
     public void linkTechnicianToMember(long technicianId,long memberId){
         Row tech=getTechnician(technicianId),member=getWorkspaceMember(memberId);if(tech.id()==0||member.id()==0||member.s("user_uuid").isEmpty())return;String user=member.s("user_uuid");
         for(Row old:rows("SELECT id FROM technicians WHERE user_uuid=? AND id<>?",new String[]{user,String.valueOf(technicianId)})){ContentValues clear=new ContentValues();clear.putNull("user_uuid");getWritableDatabase().update("technicians",clear,"id=?",new String[]{String.valueOf(old.id())});queueSync("technician",old.id(),"upsert");}

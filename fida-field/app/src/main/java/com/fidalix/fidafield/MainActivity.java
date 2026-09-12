@@ -102,6 +102,7 @@ public class MainActivity extends AppCompatActivity {
     private Uri pendingPhotoUri;
 
     private ActivityResultLauncher<Intent> cameraLauncher;
+    private ActivityResultLauncher<String> cameraPermissionLauncher;
     private ActivityResultLauncher<String> backupLauncher;
     private ActivityResultLauncher<String[]> restoreLauncher;
     private ActivityResultLauncher<ScanOptions> qrLauncher;
@@ -179,6 +180,10 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void registerLaunchers(){
+        cameraPermissionLauncher=registerForActivityResult(new ActivityResultContracts.RequestPermission(), granted->{
+            if(granted&&photoJobId>0){long jobId=photoJobId;launchCameraCapture(jobId);}
+            else{photoJobId=0;if(!granted)showCameraPermissionRequired();}
+        });
         cameraLauncher=registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result->{
             if(result.getResultCode()==Activity.RESULT_OK && photoJobId>0 && pendingPhotoUri!=null){
                 db.addPhoto(photoJobId,pendingPhotoUri.toString());
@@ -566,7 +571,27 @@ public class MainActivity extends AppCompatActivity {
     private void showReassignJob(long jobId){if(!canSeeAllJobs()){toast("Only Owner or Admin can reassign jobs");return;}AppDatabase.Row job=db.getJob(jobId);if(job.id()==0)return;ArrayList<Choice> choices=new ArrayList<>();for(AppDatabase.Row t:db.activeTechnicians())choices.add(new Choice(t.id(),t.s("name")+(t.s("user_uuid").isEmpty()?" · field only":" · app member")));if(choices.isEmpty()){toast("No active field people available");return;}LinearLayout f=form();Spinner tech=choiceSpinner(choices);setChoice(tech,parse(job.s("technician_id")));f.addView(label("Assign to"));f.addView(tech);f.addView(paragraph("The previous and new assignee are retained in Assignment history. The previous assignee loses access after cloud synchronization; the new assignee receives the job on their next sync."));AlertDialog d=new MaterialAlertDialogBuilder(this).setTitle("Reassign "+job.s("report_no")).setView(scrollForm(f)).setNegativeButton("Cancel",null).setPositiveButton("Reassign",null).create();d.setOnShowListener(x->d.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{Choice selected=(Choice)tech.getSelectedItem();if(selected==null||selected.id<=0)return;if(selected.id==parse(job.s("technician_id"))){toast("Job is already assigned to this person");return;}db.reassignJob(jobId,selected.id,accountTeam.accountName().isEmpty()?accountTeam.accountEmail():accountTeam.accountName());d.dismiss();toast("Job reassigned · queued for sync");showJobDetail(jobId);}));d.show();}
 
     private void capturePhoto(long jobId){
-        try{ContentValues values=new ContentValues();values.put(MediaStore.Images.Media.DISPLAY_NAME,"FidaField-"+System.currentTimeMillis()+".jpg");values.put(MediaStore.Images.Media.MIME_TYPE,"image/jpeg");values.put(MediaStore.Images.Media.RELATIVE_PATH,"Pictures/FidaField");Uri uri=getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,values);if(uri==null)throw new Exception("Could not create photo destination");Intent intent=new Intent(MediaStore.ACTION_IMAGE_CAPTURE);intent.putExtra(MediaStore.EXTRA_OUTPUT,uri);intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION|Intent.FLAG_GRANT_READ_URI_PERMISSION);photoJobId=jobId;pendingPhotoUri=uri;cameraLauncher.launch(intent);}catch(Exception e){error("Camera unavailable",e);}
+        if(ContextCompat.checkSelfPermission(this,Manifest.permission.CAMERA)!=android.content.pm.PackageManager.PERMISSION_GRANTED){
+            photoJobId=jobId;cameraPermissionLauncher.launch(Manifest.permission.CAMERA);return;
+        }
+        launchCameraCapture(jobId);
+    }
+
+    private void launchCameraCapture(long jobId){
+        Uri uri=null;
+        try{
+            ContentValues values=new ContentValues();values.put(MediaStore.Images.Media.DISPLAY_NAME,"FidaField-"+System.currentTimeMillis()+".jpg");values.put(MediaStore.Images.Media.MIME_TYPE,"image/jpeg");
+            if(Build.VERSION.SDK_INT>=29)values.put(MediaStore.Images.Media.RELATIVE_PATH,"Pictures/FidaField");
+            uri=getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,values);if(uri==null)throw new Exception("Could not create photo destination");
+            Intent intent=new Intent(MediaStore.ACTION_IMAGE_CAPTURE);intent.putExtra(MediaStore.EXTRA_OUTPUT,uri);intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION|Intent.FLAG_GRANT_READ_URI_PERMISSION);photoJobId=jobId;pendingPhotoUri=uri;cameraLauncher.launch(intent);
+        }catch(Exception e){
+            if(uri!=null)try{getContentResolver().delete(uri,null,null);}catch(Exception ignored){}pendingPhotoUri=null;photoJobId=0;error("Camera unavailable",e);
+        }
+    }
+
+    private void showCameraPermissionRequired(){
+        new MaterialAlertDialogBuilder(this).setTitle("Camera permission required").setMessage("Fida Field needs camera access to take job photos. Allow Camera permission, then try Add photo again.")
+                .setNegativeButton("Cancel",null).setPositiveButton("Open app settings",(d,w)->{Intent i=new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:"+getPackageName()));startActivity(i);}).show();
     }
 
     private void captureSignature(long jobId){

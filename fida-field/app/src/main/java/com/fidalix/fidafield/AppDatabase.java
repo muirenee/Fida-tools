@@ -321,7 +321,15 @@ public class AppDatabase extends SQLiteOpenHelper {
     public long saveJob(long id, Map<String,String> m, String prefix) {
         Row before=id>0?one("SELECT technician_id,technician FROM jobs WHERE id=?",new String[]{String.valueOf(id)}):new Row();long oldTech=before.i("technician_id");
         ContentValues v=cv(m,"title","problem","diagnosis","work_done","parts","technician","priority","status","job_date","next_service","customer_name_signed"); putLong(v,"customer_id",m.get("customer_id")); putLong(v,"site_id",m.get("site_id")); putLong(v,"asset_id",m.get("asset_id")); putLong(v,"technician_id",m.get("technician_id")); v.put("updated_at",now());long saved=id;
-        if(id==0){v.put("report_no",nextReportNo(prefix));v.put("created_at",now());saved=getWritableDatabase().insertOrThrow("jobs",null,v);}else getWritableDatabase().update("jobs",v,"id=?",new String[]{String.valueOf(id)});long newTech=0;try{newTech=Long.parseLong(m.getOrDefault("technician_id","0"));}catch(Exception ignored){}if(saved>0&&oldTech!=newTech)recordLocalAssignment(saved,oldTech,newTech,m.getOrDefault("assignment_actor","Local user"));queueSync("job",saved,"upsert");return saved;
+        if(id==0){
+            v.put("created_at",now());android.database.sqlite.SQLiteConstraintException last=null;
+            for(int attempt=0;attempt<8;attempt++){
+                v.put("report_no",nextReportNo(prefix));
+                try{saved=getWritableDatabase().insertOrThrow("jobs",null,v);last=null;break;}
+                catch(android.database.sqlite.SQLiteConstraintException e){last=e;}
+            }
+            if(saved<=0&&last!=null)throw last;
+        }else getWritableDatabase().update("jobs",v,"id=?",new String[]{String.valueOf(id)});long newTech=0;try{newTech=Long.parseLong(m.getOrDefault("technician_id","0"));}catch(Exception ignored){}if(saved>0&&oldTech!=newTech)recordLocalAssignment(saved,oldTech,newTech,m.getOrDefault("assignment_actor","Local user"));queueSync("job",saved,"upsert");return saved;
     }
 
     private ContentValues cv(Map<String,String> m,String... keys){ContentValues v=new ContentValues();for(String k:keys)v.put(k,m.getOrDefault(k,""));return v;}
@@ -329,15 +337,18 @@ public class AppDatabase extends SQLiteOpenHelper {
     private void putInt(ContentValues v,String k,String s){try{v.put(k,Integer.parseInt(s==null?"0":s));}catch(Exception e){v.put(k,0);}}
 
     public synchronized String nextReportNo(String prefix) {
-        SQLiteDatabase db=getWritableDatabase(); int y=Calendar.getInstance().get(Calendar.YEAR); int seq=1;
+        String p=(prefix==null||prefix.trim().isEmpty())?"FSR":prefix.trim().toUpperCase(Locale.US);
+        int y=Calendar.getInstance().get(Calendar.YEAR);String stem=p+"-"+y+"-";SQLiteDatabase db=getWritableDatabase();int seq=0;String candidate;
         db.beginTransaction();
         try {
             Cursor c=db.rawQuery("SELECT seq FROM sequences WHERE year=?",new String[]{String.valueOf(y)});
-            try{if(c.moveToFirst())seq=c.getInt(0)+1;}finally{c.close();}
+            try{if(c.moveToFirst())seq=Math.max(seq,c.getInt(0));}finally{c.close();}
+            Cursor jobs=db.rawQuery("SELECT report_no FROM jobs WHERE report_no LIKE ?",new String[]{stem+"%"});
+            try{while(jobs.moveToNext()){String report=jobs.getString(0);if(report==null||!report.startsWith(stem))continue;try{seq=Math.max(seq,Integer.parseInt(report.substring(stem.length())));}catch(Exception ignored){}}}finally{jobs.close();}
+            do{seq++;candidate=String.format(Locale.US,"%s%05d",stem,seq);}while(countSql("SELECT COUNT(*) FROM jobs WHERE report_no=?",new String[]{candidate})>0);
             ContentValues v=new ContentValues();v.put("year",y);v.put("seq",seq);db.insertWithOnConflict("sequences",null,v,SQLiteDatabase.CONFLICT_REPLACE);db.setTransactionSuccessful();
+            return candidate;
         } finally {db.endTransaction();}
-        String p=(prefix==null||prefix.trim().isEmpty())?"FSR":prefix.trim().toUpperCase(Locale.US);
-        return String.format(Locale.US,"%s-%d-%05d",p,y,seq);
     }
 
     public String nextAssetTag() { long n=count("assets",null,null)+1; return String.format(Locale.US,"AST-%05d",n); }

@@ -1,6 +1,7 @@
 from pathlib import Path
 import re
 
+# Fida Field 0.9.37 sticky forms build trigger.
 MAIN = Path('fida-field/app/src/main/java/com/fidalix/fidafield/MainActivity.java')
 GRADLE = Path('fida-field/app/build.gradle')
 
@@ -24,9 +25,7 @@ parts = []
 last = 0
 patched = 0
 for match in pattern.finditer(text):
-    block = match.group(1)
     var = match.group(2)
-    # Avoid double-patching if a future source already applies the behavior.
     tail = text[match.end():match.end()+120]
     if f'{var}.setCanceledOnTouchOutside(false);' in tail:
         continue
@@ -40,7 +39,6 @@ if patched == 0:
 parts.append(text[last:])
 text = ''.join(parts)
 
-# Keep About text aligned with the test release when the previous string is present.
 text = text.replace(
     'Fida Field 0.9.36 Test\\nPause/resume multi-session service timing, shared sites, team controls and professional field reporting by Fidalix.',
     'Fida Field 0.9.37 Test\\nSticky forms, pause/resume multi-session service timing and professional field reporting by Fidalix.'

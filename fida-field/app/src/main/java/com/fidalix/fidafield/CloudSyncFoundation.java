@@ -105,6 +105,35 @@ public class CloudSyncFoundation {
         return token;
     }
 
+    private String operationalGenerationKey(String workspaceId){return "workspace_operational_generation_"+(workspaceId==null?"":workspaceId.trim());}
+    private long rpcLong(Object raw){if(raw==null)return 0;if(raw instanceof Number)return ((Number)raw).longValue();if(raw instanceof JSONArray&&((JSONArray)raw).length()>0)return ((JSONArray)raw).optLong(0,0);try{return Long.parseLong(String.valueOf(raw).replace("\"","").trim());}catch(Exception e){return 0;}}
+    private long workspaceOperationalGeneration(String workspaceId)throws Exception{Object raw=client.rpc("get_workspace_operational_generation",new JSONObject().put("p_workspace_id",workspaceId));long value=rpcLong(raw);return value<=0?1:value;}
+    private void clearLocalOperationalMedia(){
+        try{JSONObject snap=db.exportJson();JSONArray photos=snap.optJSONArray("job_photos");if(photos!=null)for(int i=0;i<photos.length();i++){JSONObject o=photos.optJSONObject(i);String u=o==null?"":o.optString("uri","");try{if(u.startsWith("content://"))context.getContentResolver().delete(android.net.Uri.parse(u),null,null);else if(u.startsWith("file://")){String path=android.net.Uri.parse(u).getPath();if(path!=null)new java.io.File(path).delete();}}catch(Exception ignored){}}JSONArray jobs=snap.optJSONArray("jobs");if(jobs!=null)for(int i=0;i<jobs.length();i++){JSONObject o=jobs.optJSONObject(i);String path=o==null?"":o.optString("signature_path","");if(!path.isEmpty())try{new java.io.File(path).delete();}catch(Exception ignored){}}}catch(Exception ignored){}
+    }
+    private void alignOperationalGeneration(String workspaceId)throws Exception{
+        long cloud=workspaceOperationalGeneration(workspaceId),local=prefs.getLong(operationalGenerationKey(workspaceId),0L);if(local==0L){if(cloud>1L){clearLocalOperationalMedia();db.clearOperationalData();}prefs.edit().putLong(operationalGenerationKey(workspaceId),cloud).apply();return;}if(cloud>local){clearLocalOperationalMedia();db.clearOperationalData();prefs.edit().putLong(operationalGenerationKey(workspaceId),cloud).apply();}else if(cloud<local)prefs.edit().putLong(operationalGenerationKey(workspaceId),cloud).apply();
+    }
+
+    public long resetWorkspaceOperationalData(String workspaceId)throws Exception{
+        if(!backendConfigured())throw new Exception("Supabase backend is not configured");if(!signedIn())throw new Exception("Please sign in first");if(workspaceId==null||workspaceId.trim().isEmpty())throw new Exception("Cloud workspace is not bound");String wid=workspaceId.trim();
+        JSONArray photos=client.select("job_photos","select=storage_path&workspace_id=eq."+wid);JSONArray jobs=client.select("jobs","select=signature_path&workspace_id=eq."+wid);Object raw=client.rpc("reset_workspace_operational_data",new JSONObject().put("p_workspace_id",wid));long generation=rpcLong(raw);if(generation<=0)throw new Exception("Workspace reset did not return a generation");
+        for(int i=0;i<photos.length();i++){String path=photos.optJSONObject(i)==null?"":photos.optJSONObject(i).optString("storage_path","");if(!path.isEmpty())try{client.deleteObject(CloudMediaSync.BUCKET,path);}catch(Exception ignored){}}
+        for(int i=0;i<jobs.length();i++){String path=jobs.optJSONObject(i)==null?"":jobs.optJSONObject(i).optString("signature_path","");if(!path.isEmpty())try{client.deleteObject(CloudMediaSync.BUCKET,path);}catch(Exception ignored){}}
+        clearLocalOperationalMedia();db.clearOperationalData();prefs.edit().putLong(operationalGenerationKey(wid),generation).apply();return generation;
+    }
+
+    public void syncCustomerSites(String workspaceId,boolean canManage)throws Exception{
+        if(workspaceId==null||workspaceId.trim().isEmpty()||!backendConfigured()||!signedIn())return;String wid=workspaceId.trim();
+        if(canManage&&db.hasCustomerSiteLinkChanges()){
+            JSONArray cloud=client.select("customer_sites","select=id,customer_id,site_id,active&workspace_id=eq."+wid);java.util.HashSet<String> keep=new java.util.HashSet<>();
+            for(AppDatabase.Row link:db.customerSiteLinks()){long cid=parseLong(link.s("customer_id")),sid=parseLong(link.s("site_id"));if(cid<=0||sid<=0)continue;String cr=db.ensureRemoteUuid("customer",cid),sr=db.ensureRemoteUuid("site",sid),key=cr+"|"+sr;keep.add(key);JSONObject body=new JSONObject().put("workspace_id",wid).put("customer_id",cr).put("site_id",sr).put("active",true).put("updated_by",userId()).put("updated_at",isoNow());client.upsert("customer_sites","workspace_id,customer_id,site_id",body);}
+            for(int i=0;i<cloud.length();i++){JSONObject o=cloud.optJSONObject(i);if(o==null||!o.optBoolean("active",true))continue;String key=o.optString("customer_id","")+"|"+o.optString("site_id","");if(!keep.contains(key)){String id=o.optString("id","");if(!id.isEmpty())client.update("customer_sites","id=eq."+id,new JSONObject().put("active",false).put("updated_by",userId()).put("updated_at",isoNow()));}}
+            db.markCustomerSiteLinksSynced();
+        }
+        JSONArray rows=client.select("customer_sites","select=customer_id,site_id&workspace_id=eq."+wid+"&active=eq.true&order=created_at.asc");db.replaceCustomerSiteLinksFromCloud(rows);
+    }
+
     private String serviceTypesCacheKey(String workspaceId){return "service_types_json_"+(workspaceId==null||workspaceId.trim().isEmpty()?"local":workspaceId.trim());}
     private String serviceTypesDirtyKey(String workspaceId){return "service_types_dirty_"+(workspaceId==null||workspaceId.trim().isEmpty()?"local":workspaceId.trim());}
 
@@ -164,12 +193,13 @@ public class CloudSyncFoundation {
     public SyncResult syncNow(String workspaceId,boolean canManage)throws Exception{
         synchronized(SYNC_LOCK){
             if(!backendConfigured())throw new Exception("Supabase backend is not configured");if(!signedIn())throw new Exception("Please sign in first");if(workspaceId==null||workspaceId.isEmpty())throw new Exception("Cloud workspace is not bound");
-            WorkspaceMembership verified=refreshWorkspaceAccess(workspaceId);if(verified==null)throw new Exception("Workspace access is disabled or has been removed. Ask the workspace Owner/Admin to re-enable your account, then check access again.");canManage=AccountTeamManager.ROLE_OWNER.equals(verified.role)||AccountTeamManager.ROLE_ADMIN.equals(verified.role);
+            WorkspaceMembership verified=refreshWorkspaceAccess(workspaceId);if(verified==null)throw new Exception("Workspace access is disabled or has been removed. Ask the workspace Owner/Admin to re-enable your account, then check access again.");canManage=AccountTeamManager.ROLE_OWNER.equals(verified.role)||AccountTeamManager.ROLE_ADMIN.equals(verified.role);alignOperationalGeneration(workspaceId);
             int pushed=0,pulled=0,deferred=0;if(!canManage)db.discardManagerOnlyPendingChanges();String[] pushOrder=canManage?new String[]{"customer","site","asset","technician","job"}:new String[]{"job"};String[] deleteOrder=canManage?new String[]{"job","asset","site","customer","technician"}:new String[]{"job"};List<AppDatabase.Row> pending=db.pendingBusinessSyncRows();java.util.ArrayList<Long> finalizeCompleted=new java.util.ArrayList<>();java.util.HashSet<String> visibleJobIds=new java.util.HashSet<>();
             for(String type:deleteOrder){for(AppDatabase.Row q:pending){if(!type.equals(q.s("entity_type"))||!"delete".equals(q.s("operation")))continue;long localId=parseLong(q.s("entity_id"));if(localId<=0)continue;String remote=q.s("remote_uuid");if(remote.isEmpty()){db.markDeletionSynced(type,localId,"");continue;}client.update(tableFor(type),"id=eq."+remote+"&workspace_id=eq."+workspaceId,new JSONObject().put("deleted_at",isoNow()));db.markDeletionSynced(type,localId,remote);pushed++;}}
             for(String type:pushOrder){for(AppDatabase.Row q:pending){if(!type.equals(q.s("entity_type"))||"delete".equals(q.s("operation")))continue;long localId=parseLong(q.s("entity_id"));if(localId<=0)continue;if("job".equals(type)&&!db.hasEverSynced("job",localId))reserveReportNumberForFirstSync(localId,workspaceId);JSONObject body=payload(type,localId,workspaceId);if(body==null)continue;String remoteId=body.optString("id");if("technician".equals(type)){String canonical=canonicalTechnicianRemoteId(workspaceId,body);if(!canonical.isEmpty()&&!canonical.equals(remoteId)){long mappedLocal=db.localIdForRemote("technician",canonical);if(mappedLocal>0&&mappedLocal!=localId)localId=db.reconcileTechnicianIdentity(localId,mappedLocal,canonical);else db.bindRemoteUuid("technician",localId,canonical);body.put("id",canonical);remoteId=canonical;}}if("job".equals(type)&&!canManage&&"Completed".equals(body.optString("status"))){JSONObject staged=new JSONObject(body.toString());staged.put("status","In Progress");client.upsert(tableFor(type),"id",staged);db.bindRemoteUuid(type,localId,remoteId);finalizeCompleted.add(localId);}else{client.upsert(tableFor(type),"id",body);db.markEntitySynced(type,localId,remoteId);}pushed++;}}
             for(String type:pushOrder){JSONArray rows=client.select(tableFor(type),"select=*&workspace_id=eq."+workspaceId);for(int i=0;i<rows.length();i++){JSONObject o=rows.getJSONObject(i);String remote=o.optString("id","");if(remote.isEmpty())continue;if("job".equals(type))visibleJobIds.add(remote);if(isDeleted(o)){long before=db.localIdForRemote(type,remote);if(before>0&&!db.applyRemoteDeletion(type,remote)){deferred++;continue;}if(before>0)pulled++;continue;}long local=db.localIdForRemote(type,remote);if(local>0&&db.hasPendingSync(type,local)){db.recordSyncConflict(type,local,remote,"Cloud update deferred because this device has unsynced edits");deferred++;continue;}long saved=db.upsertRemoteEntity(type,o);if(saved>0)pulled++;}}
             if(!canManage)db.pruneInvisibleCloudJobs(visibleJobIds);
+            syncCustomerSites(workspaceId,canManage);
             syncBranding(workspaceId,canManage);
             syncServiceTypes(workspaceId,canManage);
             CloudMediaSync.Result media=new CloudMediaSync(context,prefs,db,client).sync(workspaceId,canManage);

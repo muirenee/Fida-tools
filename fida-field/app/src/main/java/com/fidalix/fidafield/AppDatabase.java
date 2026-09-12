@@ -21,7 +21,7 @@ import java.util.Set;
 
 public class AppDatabase extends SQLiteOpenHelper {
     public static final String DB_NAME = "fida_field.db";
-    public static final int DB_VERSION = 9;
+    public static final int DB_VERSION = 10;
 
     public static class Row extends HashMap<String, String> {
         public long id() { try { return Long.parseLong(getOrDefault("id", "0")); } catch (Exception e) { return 0; } }
@@ -39,6 +39,9 @@ public class AppDatabase extends SQLiteOpenHelper {
     @Override public void onCreate(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE customers (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, contact TEXT, phone TEXT, email TEXT, address TEXT, notes TEXT, created_at TEXT NOT NULL)");
         db.execSQL("CREATE TABLE sites (id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id INTEGER NOT NULL, name TEXT NOT NULL, address TEXT, contact TEXT, phone TEXT, notes TEXT, created_at TEXT NOT NULL, FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE)");
+        db.execSQL("CREATE TABLE customer_sites (customer_id INTEGER NOT NULL, site_id INTEGER NOT NULL, PRIMARY KEY(customer_id,site_id), FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE, FOREIGN KEY(site_id) REFERENCES sites(id) ON DELETE CASCADE)");
+        db.execSQL("CREATE INDEX idx_customer_sites_customer ON customer_sites(customer_id,site_id)");
+        db.execSQL("CREATE INDEX idx_customer_sites_site ON customer_sites(site_id,customer_id)");
         db.execSQL("CREATE TABLE assets (id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id INTEGER, site_id INTEGER, tag TEXT NOT NULL UNIQUE, name TEXT NOT NULL, category TEXT, make_model TEXT, serial TEXT, location TEXT, notes TEXT, interval_days INTEGER DEFAULT 0, next_service TEXT, created_at TEXT NOT NULL, FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE SET NULL, FOREIGN KEY(site_id) REFERENCES sites(id) ON DELETE SET NULL)");
         db.execSQL("CREATE TABLE jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, report_no TEXT NOT NULL UNIQUE, customer_id INTEGER, site_id INTEGER, asset_id INTEGER, title TEXT NOT NULL, problem TEXT, diagnosis TEXT, work_done TEXT, parts TEXT, technician TEXT, technician_id INTEGER, priority TEXT DEFAULT 'Normal', status TEXT DEFAULT 'Open', job_date TEXT NOT NULL, next_service TEXT, signature_path TEXT, customer_name_signed TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE SET NULL, FOREIGN KEY(site_id) REFERENCES sites(id) ON DELETE SET NULL, FOREIGN KEY(asset_id) REFERENCES assets(id) ON DELETE SET NULL)");
         db.execSQL("CREATE TABLE job_photos (id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER NOT NULL, uri TEXT NOT NULL, caption TEXT, created_at TEXT NOT NULL, FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE)");
@@ -107,6 +110,12 @@ public class AppDatabase extends SQLiteOpenHelper {
             db.execSQL("CREATE INDEX IF NOT EXISTS idx_job_assignment_history_job ON job_assignment_history(job_id,changed_at)");
             db.execSQL("CREATE INDEX IF NOT EXISTS idx_jobs_technician_id ON jobs(technician_id)");
         }
+        if(oldVersion<10){
+            db.execSQL("CREATE TABLE IF NOT EXISTS customer_sites (customer_id INTEGER NOT NULL, site_id INTEGER NOT NULL, PRIMARY KEY(customer_id,site_id), FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE, FOREIGN KEY(site_id) REFERENCES sites(id) ON DELETE CASCADE)");
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_customer_sites_customer ON customer_sites(customer_id,site_id)");
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_customer_sites_site ON customer_sites(site_id,customer_id)");
+            db.execSQL("INSERT OR IGNORE INTO customer_sites(customer_id,site_id) SELECT customer_id,id FROM sites WHERE customer_id IS NOT NULL");
+        }
     }
 
     public String today() { return new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new Date()); }
@@ -136,9 +145,9 @@ public class AppDatabase extends SQLiteOpenHelper {
     public String ensureRemoteUuid(String type,long entityId){Row r=one("SELECT remote_uuid FROM sync_metadata WHERE entity_type=? AND entity_id=?",new String[]{type,String.valueOf(entityId)});if(!r.s("remote_uuid").isEmpty())return r.s("remote_uuid");String uuid=java.util.UUID.randomUUID().toString();ContentValues v=new ContentValues();v.put("entity_type",type);v.put("entity_id",entityId);v.put("remote_uuid",uuid);getWritableDatabase().insertWithOnConflict("sync_metadata",null,v,SQLiteDatabase.CONFLICT_IGNORE);return one("SELECT remote_uuid FROM sync_metadata WHERE entity_type=? AND entity_id=?",new String[]{type,String.valueOf(entityId)}).s("remote_uuid");}
     public List<Row> pendingSyncRows(){return rows("SELECT q.*,m.remote_uuid,m.server_version,m.last_synced_at FROM sync_queue q LEFT JOIN sync_metadata m ON m.entity_type=q.entity_type AND m.entity_id=q.entity_id ORDER BY q.changed_at,q.id",null);}
 
-    public long pendingBusinessChanges(){return count("sync_queue","entity_type IN ('customer','site','asset','technician','job','job_photo','maintenance_log','job_signature')",null);}
+    public long pendingBusinessChanges(){return count("sync_queue","entity_type IN ('customer','site','customer_site','asset','technician','job','job_photo','maintenance_log','job_signature')",null);}
     public List<Row> pendingBusinessSyncRows(){return rows("SELECT q.*,m.remote_uuid,m.server_version,m.last_synced_at FROM sync_queue q LEFT JOIN sync_metadata m ON m.entity_type=q.entity_type AND m.entity_id=q.entity_id WHERE q.entity_type IN ('customer','site','asset','technician','job') ORDER BY q.changed_at,q.id",null);}
-    public void discardManagerOnlyPendingChanges(){getWritableDatabase().delete("sync_queue","entity_type IN ('customer','site','asset','technician')",null);getWritableDatabase().delete("sync_conflicts","entity_type IN ('customer','site','asset','technician')",null);}
+    public void discardManagerOnlyPendingChanges(){getWritableDatabase().delete("sync_queue","entity_type IN ('customer','site','customer_site','asset','technician')",null);getWritableDatabase().delete("sync_conflicts","entity_type IN ('customer','site','asset','technician')",null);}
     public Row syncEntity(String type,long id){if("customer".equals(type))return getCustomer(id);if("site".equals(type))return getSite(id);if("asset".equals(type))return getAsset(id);if("technician".equals(type))return getTechnician(id);if("job".equals(type))return one("SELECT * FROM jobs WHERE id=?",new String[]{String.valueOf(id)});return new Row();}
     public long localIdForRemote(String type,String remoteUuid){if(remoteUuid==null||remoteUuid.isEmpty())return 0;Row r=one("SELECT entity_id FROM sync_metadata WHERE entity_type=? AND remote_uuid=?",new String[]{type,remoteUuid});try{return Long.parseLong(r.s("entity_id"));}catch(Exception e){return 0;}}
     public void bindRemoteUuid(String type,long localId,String remoteUuid){if(localId<=0||remoteUuid==null||remoteUuid.isEmpty())return;Row old=one("SELECT id FROM sync_metadata WHERE entity_type=? AND entity_id=?",new String[]{type,String.valueOf(localId)});ContentValues v=new ContentValues();v.put("remote_uuid",remoteUuid);v.put("last_synced_at",now());if(old.id()>0)getWritableDatabase().update("sync_metadata",v,"id=?",new String[]{String.valueOf(old.id())});else{v.put("entity_type",type);v.put("entity_id",localId);getWritableDatabase().insertOrThrow("sync_metadata",null,v);}}
@@ -157,7 +166,7 @@ public class AppDatabase extends SQLiteOpenHelper {
     public void markDeletionSynced(String type,long localId,String remoteUuid){SQLiteDatabase d=getWritableDatabase();ContentValues v=new ContentValues();v.put("deleted_at",now());v.put("last_synced_at",now());Row m=one("SELECT id FROM sync_metadata WHERE entity_type=? AND entity_id=?",new String[]{type,String.valueOf(localId)});if(m.id()>0)d.update("sync_metadata",v,"id=?",new String[]{String.valueOf(m.id())});else if(remoteUuid!=null&&!remoteUuid.isEmpty()){v.put("entity_type",type);v.put("entity_id",localId);v.put("remote_uuid",remoteUuid);d.insertWithOnConflict("sync_metadata",null,v,SQLiteDatabase.CONFLICT_IGNORE);}d.delete("sync_queue","entity_type=? AND entity_id=?",new String[]{type,String.valueOf(localId)});resolveSyncConflict(type,localId);}
     private String localTableForType(String type){if("customer".equals(type))return "customers";if("site".equals(type))return "sites";if("asset".equals(type))return "assets";if("technician".equals(type))return "technicians";if("job".equals(type))return "jobs";if("job_photo".equals(type))return "job_photos";if("maintenance_log".equals(type))return "maintenance_logs";return "";}
     public boolean hasPendingDependents(String type,long localId){if(localId<=0)return false;if("customer".equals(type))return count("sync_queue","entity_type='site' AND entity_id IN (SELECT id FROM sites WHERE customer_id=?)",new String[]{String.valueOf(localId)})>0;if("asset".equals(type))return count("sync_queue","entity_type='maintenance_log' AND entity_id IN (SELECT id FROM maintenance_logs WHERE asset_id=?)",new String[]{String.valueOf(localId)})>0;if("job".equals(type))return count("sync_queue","(entity_type='job_photo' AND entity_id IN (SELECT id FROM job_photos WHERE job_id=?)) OR (entity_type='job_signature' AND entity_id=?)",new String[]{String.valueOf(localId),String.valueOf(localId)})>0;return false;}
-    public boolean applyRemoteDeletion(String type,String remoteUuid){long local=localIdForRemote(type,remoteUuid);if(local<=0)return false;if(hasPendingSync(type,local)||hasPendingDependents(type,local)){recordSyncConflict(type,local,remoteUuid,"Cloud deletion deferred because this device has unsynced work");return false;}String table=localTableForType(type);if(table.isEmpty())return false;SQLiteDatabase d=getWritableDatabase();d.delete(table,"id=?",new String[]{String.valueOf(local)});markDeletionSynced(type,local,remoteUuid);return true;}
+    public boolean applyRemoteDeletion(String type,String remoteUuid){long local=localIdForRemote(type,remoteUuid);if(local<=0)return false;if(hasPendingSync(type,local)||hasPendingDependents(type,local)){recordSyncConflict(type,local,remoteUuid,"Cloud deletion deferred because this device has unsynced work");return false;}String table=localTableForType(type);if(table.isEmpty())return false;SQLiteDatabase d=getWritableDatabase();if("customer".equals(type))rehomeSharedSitesBeforeCustomerDelete(local,false);d.delete(table,"id=?",new String[]{String.valueOf(local)});markDeletionSynced(type,local,remoteUuid);return true;}
     public void rebindWorkspace(String oldId,String newId){if(oldId==null||newId==null||oldId.isEmpty()||newId.isEmpty()||oldId.equals(newId))return;ContentValues v=new ContentValues();v.put("workspace_id",newId);getWritableDatabase().update("workspace_members",v,"workspace_id=?",new String[]{oldId});getWritableDatabase().update("workspace_invites",v,"workspace_id=?",new String[]{oldId});}
     public void cacheWorkspaceTeam(String workspaceId,JSONArray members,JSONArray invites)throws Exception{
         SQLiteDatabase d=getWritableDatabase();d.beginTransaction();try{d.delete("workspace_members","workspace_id=?",new String[]{workspaceId});d.delete("workspace_invites","workspace_id=?",new String[]{workspaceId});
@@ -253,7 +262,27 @@ public class AppDatabase extends SQLiteOpenHelper {
 
     public List<Row> customers() { return rows("SELECT * FROM customers ORDER BY name COLLATE NOCASE", null); }
     public List<Row> sites(long customerId) {
-        return rows("SELECT s.*, c.name customer_name FROM sites s LEFT JOIN customers c ON c.id=s.customer_id " + (customerId > 0 ? "WHERE s.customer_id=? " : "") + "ORDER BY c.name,s.name", customerId > 0 ? new String[]{String.valueOf(customerId)} : null);
+        String where=customerId>0?"WHERE EXISTS (SELECT 1 FROM customer_sites x WHERE x.site_id=s.id AND x.customer_id=?) ":"";
+        return rows("SELECT s.*, group_concat(DISTINCT c.name) customer_name FROM sites s LEFT JOIN customer_sites cs ON cs.site_id=s.id LEFT JOIN customers c ON c.id=cs.customer_id "+where+"GROUP BY s.id ORDER BY s.name COLLATE NOCASE",customerId>0?new String[]{String.valueOf(customerId)}:null);
+    }
+    public long siteCountForCustomer(long customerId){return countSql("SELECT COUNT(*) FROM customer_sites WHERE customer_id=?",new String[]{String.valueOf(customerId)});}
+    public boolean siteBelongsToCustomer(long siteId,long customerId){return siteId>0&&customerId>0&&count("customer_sites","site_id=? AND customer_id=?",new String[]{String.valueOf(siteId),String.valueOf(customerId)})>0;}
+    public List<Long> customerIdsForSite(long siteId){ArrayList<Long> out=new ArrayList<>();for(Row r:rows("SELECT customer_id FROM customer_sites WHERE site_id=? ORDER BY customer_id",new String[]{String.valueOf(siteId)})){try{out.add(Long.parseLong(r.s("customer_id")));}catch(Exception ignored){}}return out;}
+    public long firstCustomerIdForSite(long siteId){Row r=one("SELECT customer_id FROM customer_sites WHERE site_id=? ORDER BY customer_id LIMIT 1",new String[]{String.valueOf(siteId)});try{return Long.parseLong(r.s("customer_id"));}catch(Exception e){return 0;}}
+    public String customerNamesForSite(long siteId){return one("SELECT group_concat(name, ', ') names FROM (SELECT c.name name FROM customer_sites cs JOIN customers c ON c.id=cs.customer_id WHERE cs.site_id=? ORDER BY c.name COLLATE NOCASE)",new String[]{String.valueOf(siteId)}).s("names");}
+    public List<Row> customerSiteLinks(){return rows("SELECT customer_id,site_id FROM customer_sites ORDER BY site_id,customer_id",null);}
+    public boolean hasCustomerSiteLinkChanges(){return count("sync_queue","entity_type='customer_site'",null)>0;}
+    public void markCustomerSiteLinksSynced(){getWritableDatabase().delete("sync_queue","entity_type='customer_site'",null);}
+    public void setSiteCustomers(long siteId,List<Long> customerIds){
+        if(siteId<=0||customerIds==null||customerIds.isEmpty())return;SQLiteDatabase d=getWritableDatabase();d.beginTransaction();long first=0;
+        try{d.delete("customer_sites","site_id=?",new String[]{String.valueOf(siteId)});for(Long cid:customerIds){if(cid==null||cid<=0)continue;if(first==0)first=cid;ContentValues v=new ContentValues();v.put("customer_id",cid);v.put("site_id",siteId);d.insertWithOnConflict("customer_sites",null,v,SQLiteDatabase.CONFLICT_IGNORE);}if(first>0){ContentValues sv=new ContentValues();sv.put("customer_id",first);d.update("sites",sv,"id=?",new String[]{String.valueOf(siteId)});}d.setTransactionSuccessful();}finally{d.endTransaction();}
+        queueSync("site",siteId,"upsert");queueSync("customer_site",siteId,"upsert");
+    }
+    public void addSiteCustomers(long siteId,List<Long> customerIds){
+        if(siteId<=0||customerIds==null||customerIds.isEmpty())return;SQLiteDatabase d=getWritableDatabase();long first=firstCustomerIdForSite(siteId);d.beginTransaction();try{for(Long cid:customerIds){if(cid==null||cid<=0)continue;ContentValues v=new ContentValues();v.put("customer_id",cid);v.put("site_id",siteId);d.insertWithOnConflict("customer_sites",null,v,SQLiteDatabase.CONFLICT_IGNORE);if(first==0)first=cid;}if(first>0){ContentValues sv=new ContentValues();sv.put("customer_id",first);d.update("sites",sv,"id=?",new String[]{String.valueOf(siteId)});}d.setTransactionSuccessful();}finally{d.endTransaction();}queueSync("site",siteId,"upsert");queueSync("customer_site",siteId,"upsert");
+    }
+    public void replaceCustomerSiteLinksFromCloud(JSONArray links)throws Exception{
+        SQLiteDatabase d=getWritableDatabase();d.beginTransaction();try{d.delete("customer_sites",null,null);for(int i=0;i<links.length();i++){JSONObject o=links.getJSONObject(i);long cid=localIdForRemote("customer",o.optString("customer_id","")),sid=localIdForRemote("site",o.optString("site_id",""));if(cid<=0||sid<=0)continue;ContentValues v=new ContentValues();v.put("customer_id",cid);v.put("site_id",sid);d.insertWithOnConflict("customer_sites",null,v,SQLiteDatabase.CONFLICT_IGNORE);}d.setTransactionSuccessful();}finally{d.endTransaction();}
     }
     public List<Row> assets(long customerId, long siteId) {
         String where = ""; ArrayList<String> a = new ArrayList<>();
@@ -364,9 +393,13 @@ public class AppDatabase extends SQLiteOpenHelper {
         ContentValues v=new ContentValues();v.put("status",status);v.put("updated_at",now());getWritableDatabase().update("jobs",v,"id=?",new String[]{String.valueOf(jobId)});queueSync("job",jobId,"upsert");
     }
 
+    private void rehomeSharedSitesBeforeCustomerDelete(long customerId,boolean queueChanges){
+        for(Row link:rows("SELECT site_id FROM customer_sites WHERE customer_id=?",new String[]{String.valueOf(customerId)})){long siteId=link.i("site_id");Row replacement=one("SELECT customer_id FROM customer_sites WHERE site_id=? AND customer_id<>? ORDER BY customer_id LIMIT 1",new String[]{String.valueOf(siteId),String.valueOf(customerId)});long next=replacement.i("customer_id");if(next>0){ContentValues v=new ContentValues();v.put("customer_id",next);getWritableDatabase().update("sites",v,"id=?",new String[]{String.valueOf(siteId)});if(queueChanges)queueSync("site",siteId,"upsert");}else if(queueChanges)queueSync("site",siteId,"delete");if(queueChanges)queueSync("customer_site",siteId,"upsert");}
+    }
     public void deleteById(String table,long id){
         if(id<=0)return;
-        if("customers".equals(table)){for(Row r:rows("SELECT id FROM sites WHERE customer_id=?",new String[]{String.valueOf(id)}))queueSync("site",r.id(),"delete");}
+        if("customers".equals(table))rehomeSharedSitesBeforeCustomerDelete(id,true);
+        else if("sites".equals(table))queueSync("customer_site",id,"upsert");
         else if("assets".equals(table)){for(Row r:rows("SELECT id FROM maintenance_logs WHERE asset_id=?",new String[]{String.valueOf(id)}))queueSync("maintenance_log",r.id(),"delete");}
         else if("jobs".equals(table)){for(Row r:photos(id))queueSync("job_photo",r.id(),"delete");queueSync("job_signature",id,"delete");}
         String type=table.endsWith("s")?table.substring(0,table.length()-1):table;queueSync(type,id,"delete");getWritableDatabase().delete(table,"id=?",new String[]{String.valueOf(id)});
@@ -379,22 +412,26 @@ public class AppDatabase extends SQLiteOpenHelper {
     public void completeMaintenance(long assetId,long jobId,String notes,String nextService){ContentValues v=new ContentValues();v.put("asset_id",assetId);if(jobId>0)v.put("job_id",jobId);v.put("service_date",today());v.put("notes",notes);v.put("next_service",nextService);v.put("created_at",now());long saved=getWritableDatabase().insert("maintenance_logs",null,v);queueSync("maintenance_log",saved,"upsert");if(nextService!=null&&!nextService.isEmpty()){ContentValues a=new ContentValues();a.put("next_service",nextService);getWritableDatabase().update("assets",a,"id=?",new String[]{String.valueOf(assetId)});}queueSync("asset",assetId,"upsert");if(jobId>0)queueSync("job",jobId,"upsert");}
     public void completeMaintenanceIfNeeded(long assetId,long jobId,String notes,String nextService){if(jobId>0&&count("maintenance_logs","job_id=?",new String[]{String.valueOf(jobId)})>0)return;completeMaintenance(assetId,jobId,notes,nextService);}
 
+    public void clearOperationalData(){
+        SQLiteDatabase d=getWritableDatabase();d.beginTransaction();try{d.delete("job_assignment_history",null,null);d.delete("maintenance_logs",null,null);d.delete("job_photos",null,null);d.delete("jobs",null,null);d.delete("assets",null,null);d.delete("customer_sites",null,null);d.delete("sites",null,null);d.delete("customers",null,null);d.delete("sequences",null,null);d.delete("sync_queue","entity_type IN ('customer','site','customer_site','asset','job','job_photo','maintenance_log','job_signature')",null);d.delete("sync_conflicts","entity_type IN ('customer','site','asset','job','job_photo','maintenance_log')",null);d.delete("sync_metadata","entity_type IN ('customer','site','asset','job','job_photo','maintenance_log','job_signature')",null);d.setTransactionSuccessful();}finally{d.endTransaction();}
+    }
+
     public JSONObject exportJson() throws Exception {
         JSONObject root=new JSONObject();root.put("format","FidaFieldBackup");root.put("version",1);root.put("exported_at",now());
-        String[] tables={"customers","sites","assets","jobs","job_photos","maintenance_logs","technicians","job_assignment_history","sequences"};
+        String[] tables={"customers","sites","customer_sites","assets","jobs","job_photos","maintenance_logs","technicians","job_assignment_history","sequences"};
         SQLiteDatabase db=getReadableDatabase();
         for(String table:tables){JSONArray arr=new JSONArray();Cursor c=db.rawQuery("SELECT * FROM "+table,null);try{while(c.moveToNext()){JSONObject o=new JSONObject();for(int i=0;i<c.getColumnCount();i++){if(c.isNull(i))o.put(c.getColumnName(i),JSONObject.NULL);else o.put(c.getColumnName(i),c.getString(i));}arr.put(o);}}finally{c.close();}root.put(table,arr);}return root;
     }
 
     public void importJson(JSONObject root) throws Exception {
-        String[] tables={"job_assignment_history","maintenance_logs","job_photos","jobs","assets","sites","customers","technicians","sequences"}; SQLiteDatabase db=getWritableDatabase(); db.beginTransaction();
-        try{for(String t:tables)db.delete(t,null,null);db.delete("sync_queue",null,null);String[] order={"customers","sites","assets","jobs","job_photos","maintenance_logs","technicians","job_assignment_history","sequences"};for(String t:order){JSONArray arr=root.optJSONArray(t);if(arr==null)continue;for(int i=0;i<arr.length();i++){JSONObject o=arr.getJSONObject(i);ContentValues v=new ContentValues();java.util.Iterator<String> it=o.keys();while(it.hasNext()){String k=it.next();if(o.isNull(k))v.putNull(k);else v.put(k,o.getString(k));}db.insertOrThrow(t,null,v);}}String stamp=now();queueExistingForSync(db,"customer","customers",stamp);queueExistingForSync(db,"site","sites",stamp);queueExistingForSync(db,"asset","assets",stamp);queueExistingForSync(db,"job","jobs",stamp);queueExistingForSync(db,"technician","technicians",stamp);queueExistingForSync(db,"job_photo","job_photos",stamp);queueExistingForSync(db,"maintenance_log","maintenance_logs",stamp);db.execSQL("INSERT OR REPLACE INTO sync_queue(entity_type,entity_id,operation,changed_at) SELECT 'job_signature',id,'upsert',? FROM jobs WHERE signature_path IS NOT NULL AND signature_path<>''",new Object[]{stamp});db.setTransactionSuccessful();}finally{db.endTransaction();}
+        String[] tables={"job_assignment_history","maintenance_logs","job_photos","jobs","assets","customer_sites","sites","customers","technicians","sequences"}; SQLiteDatabase db=getWritableDatabase(); db.beginTransaction();
+        try{for(String t:tables)db.delete(t,null,null);db.delete("sync_queue",null,null);String[] order={"customers","sites","customer_sites","assets","jobs","job_photos","maintenance_logs","technicians","job_assignment_history","sequences"};for(String t:order){JSONArray arr=root.optJSONArray(t);if(arr==null)continue;for(int i=0;i<arr.length();i++){JSONObject o=arr.getJSONObject(i);ContentValues v=new ContentValues();java.util.Iterator<String> it=o.keys();while(it.hasNext()){String k=it.next();if(o.isNull(k))v.putNull(k);else v.put(k,o.getString(k));}db.insertOrThrow(t,null,v);}}String stamp=now();queueExistingForSync(db,"customer","customers",stamp);queueExistingForSync(db,"site","sites",stamp);db.execSQL("INSERT OR IGNORE INTO customer_sites(customer_id,site_id) SELECT customer_id,id FROM sites WHERE customer_id IS NOT NULL");db.execSQL("INSERT OR REPLACE INTO sync_queue(entity_type,entity_id,operation,changed_at) SELECT 'customer_site',id,'upsert',? FROM sites",new Object[]{stamp});queueExistingForSync(db,"asset","assets",stamp);queueExistingForSync(db,"job","jobs",stamp);queueExistingForSync(db,"technician","technicians",stamp);queueExistingForSync(db,"job_photo","job_photos",stamp);queueExistingForSync(db,"maintenance_log","maintenance_logs",stamp);db.execSQL("INSERT OR REPLACE INTO sync_queue(entity_type,entity_id,operation,changed_at) SELECT 'job_signature',id,'upsert',? FROM jobs WHERE signature_path IS NOT NULL AND signature_path<>''",new Object[]{stamp});db.setTransactionSuccessful();}finally{db.endTransaction();}
     }
 
     public void insertDemoData() {
         if(count("customers",null,null)>0)return;
         long c1=saveCustomer(0,map("name","Kigali Business Center","contact","Alice","phone","+250 788 000 001","email","alice@example.com","address","Kigali","notes","Demo customer"));
-        long s1=saveSite(0,map("customer_id",String.valueOf(c1),"name","Main Office","address","Kigali","contact","Eric","phone","+250 788 000 002","notes",""));
+        long s1=saveSite(0,map("customer_id",String.valueOf(c1),"name","Main Office","address","Kigali","contact","Eric","phone","+250 788 000 002","notes",""));setSiteCustomers(s1,java.util.Collections.singletonList(c1));
         saveAsset(0,map("customer_id",String.valueOf(c1),"site_id",String.valueOf(s1),"tag","AST-00001","name","Main UPS","category","UPS / Power","make_model","APC Smart-UPS","serial","DEMO-001","location","Server Room","notes","Quarterly inspection","interval_days","90","next_service",today()));
     }
 

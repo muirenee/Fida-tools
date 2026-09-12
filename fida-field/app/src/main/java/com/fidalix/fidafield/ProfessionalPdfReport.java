@@ -100,7 +100,7 @@ public class ProfessionalPdfReport {
     }
 
     private static String serviceTime(long millis){if(millis<=0)return "";return new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm",Locale.US).format(new java.util.Date(millis));}
-    private static String serviceDuration(AppDatabase.Row j){long started=j.l("service_started_at_ms"),finished=j.l("service_completed_at_ms");if(started<=0)return "";long minutes=finished>0?Math.max(0,j.i("service_duration_minutes")):Math.max(0L,(System.currentTimeMillis()-started)/60000L);if(minutes<1)return "< 1 min";long h=minutes/60,m=minutes%60;String value=h>0?h+" h"+(m>0?" "+m+" min":""):m+" min";return finished>0?value:"In progress · "+value;}
+    private static String serviceDuration(AppDatabase db,AppDatabase.Row j){if(j.l("service_started_at_ms")<=0)return "";long minutes=db.jobServiceDurationMinutes(j.id());String value;if(minutes<1)value="< 1 min";else{long h=minutes/60,m=minutes%60;value=h>0?h+" h"+(m>0?" "+m+" min":""):m+" min";}if(j.l("service_completed_at_ms")>0)return value;return (db.jobServiceRunning(j.id())?"Running · ":"Paused · ")+value;}
 
     public static File generate(Context context,AppDatabase db,long jobId,SharedPreferences prefs)throws Exception{
         AppDatabase.Row j=db.getJob(jobId);if(j.id()==0)throw new IllegalArgumentException("Job not found");
@@ -108,7 +108,7 @@ public class ProfessionalPdfReport {
         EntitlementManager entitlements=new EntitlementManager(prefs,db);BrandingManager branding=new BrandingManager(prefs,entitlements.isPro());Bitmap logo=branding.loadCustomLogo(context);Writer w=new Writer(company,j.s("report_no"),branding.primary(),branding.accent(),branding.highlight(),logo);
 
         w.reportHero(j.s("title"),j.s("status"),j.s("job_date"),j.s("customer_name"));
-        w.section("Report details");w.two("Report number",j.s("report_no"),"Priority",j.s("priority"));w.two("Service date",j.s("job_date"),"Technician",j.s("technician"));w.two("Service started",serviceTime(j.l("service_started_at_ms")),"Service finished",serviceTime(j.l("service_completed_at_ms")));w.field("Service duration",serviceDuration(j));
+        w.section("Report details");w.two("Report number",j.s("report_no"),"Priority",j.s("priority"));w.two("Service date",j.s("job_date"),"Technician",j.s("technician"));w.two("First service start",serviceTime(j.l("service_started_at_ms")),"Service finished",serviceTime(j.l("service_completed_at_ms")));w.field("Active service duration",serviceDuration(db,j));w.field("Work sessions",db.jobServiceSessionSummary(jobId));
         w.section("Customer & site");w.two("Customer",j.s("customer_name"),"Contact",j.s("customer_contact"));w.two("Email",j.s("customer_email"),"Phone",j.s("customer_phone"));w.field("Customer address",j.s("customer_address"));w.two("Site",j.s("site_name"),"Site contact",j.s("site_contact"));w.field("Site address",j.s("site_address"));w.field("Asset",(j.s("asset_tag").isEmpty()?"":j.s("asset_tag")+" — ")+j.s("asset_name"));
         w.section("Service summary");w.field("Reported problem",j.s("problem"));w.field("Diagnosis",j.s("diagnosis"));w.field("Work performed",j.s("work_done"));w.field("Parts / materials",j.s("parts"));w.two("Next recommended service",j.s("next_service"),"Status",j.s("status"));
 

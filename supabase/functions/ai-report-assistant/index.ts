@@ -19,6 +19,7 @@ const parseJsonText=(raw:string)=>{let v=raw.trim();if(v.startsWith("```"))v=v.r
 
 Deno.serve(async(req:Request)=>{
   if(req.method!=="POST")return json({ok:false,message:"Method not allowed"},405);
+  let usageEventId="";
   try{
     const auth=req.headers.get("Authorization")??"";const jwt=auth.startsWith("Bearer ")?auth.slice(7):"";
     if(!jwt)return json({ok:false,message:"Authentication required"},401);
@@ -58,14 +59,31 @@ Deno.serve(async(req:Request)=>{
     const {data:claimData,error:claimError}=await admin.rpc("claim_ai_usage",{p_workspace_id:workspaceId,p_user_id:user.id,p_monthly_limit:monthlyLimit,p_per_user_minute_limit:perMinute});
     if(claimError)throw claimError;const claim=Array.isArray(claimData)?claimData[0]:claimData;
     if(!claim?.allowed)return json({ok:false,message:String(claim?.reason||"AI request limit reached"),usage:{...usage,used_this_month:Number(claim?.used_this_month??used),remaining:Math.max(monthlyLimit-Number(claim?.used_this_month??used),0)}},429);
-    const usageEventId=String(claim.event_id??"");const claimedUsed=Number(claim.used_this_month??used+1);
+    usageEventId=String(claim.event_id??"");const claimedUsed=Number(claim.used_this_month??used+1);
 
     const context={title:text(body?.title,500),reported_problem:text(body?.problem,5000),diagnosis_notes:text(body?.diagnosis,5000),work_notes:text(body?.work_done,5000),parts_materials:text(body?.parts,3000)};
     if(!context.reported_problem&&!context.diagnosis_notes&&!context.work_notes&&!context.parts_materials){if(usageEventId)await admin.rpc("complete_ai_usage",{p_event_id:usageEventId,p_status:"failed",p_input_tokens:0,p_output_tokens:0});return json({ok:false,message:"Enter some service notes before using AI assist."},400);}
 
     const model=Deno.env.get("OPENAI_MODEL")||"gpt-5.6-luna";
-    const instructions=`You are a field-service report writing assistant. Improve technician notes into concise professional service-report wording. Never invent facts, measurements, tests, faults, parts, quantities, outcomes, safety checks, or actions that are not present in the input. Preserve technical meaning. If a field has insufficient factual information, return the original text for that field or an empty string. Do not include customer names or assumptions. Return only one JSON object with exactly these string keys: diagnosis, work_done, parts. No markdown.`;
-    const resp=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify({model,instructions,input:JSON.stringify(context),max_output_tokens:1000,store:false})});
+    const instructions=`You are Fida Field's professional field-service report writing assistant. Your job is to EXPAND terse technician notes into polished, customer-ready service report prose while preserving the facts exactly.
+
+Core behavior:
+- Do not merely echo short input. Unless a field is already well-written and complete, rewrite it into fuller professional sentences and make it materially clearer and more detailed.
+- For a non-empty diagnosis field, normally produce about 2-4 concise sentences. Explain the stated fault/condition, what it means operationally, and the relationship between the stated observations, but only where that meaning follows directly from the technician's words.
+- For a non-empty work_done field, normally produce about 2-5 concise sentences. Turn fragments into a logical sequence of actions performed and stated results. Use professional verbs such as inspected, checked, configured, replaced, cleaned, reconnected, tested, restored, or verified ONLY when those actions are actually present in the input.
+- For a non-empty parts field, turn shorthand into a clear professional materials/parts statement. Keep quantities, model names, serials and part names exactly when supplied.
+- Use the reported problem and job title only as context for wording; never convert the reported problem into a diagnosis unless the technician actually states that diagnosis.
+- If a source field is blank, keep the corresponding output blank. Do not invent content to fill it.
+- Never invent measurements, test results, root causes, device states, parts, quantities, safety checks, customer statements, successful outcomes, or actions that were not provided.
+- You may add neutral connective wording and professional framing such as "During inspection", "The reported issue was assessed", "The work carried out included", or "Following the stated intervention" only when it does not add a new factual claim.
+- Preserve technical terminology and all concrete facts. Correct grammar, spelling and capitalization.
+- Avoid vague filler, marketing language, and unsupported claims.
+- Prefer concise paragraphs over bullet points.
+
+Important: A short technician note should normally become a longer, more professional description, not the same sentence returned unchanged.
+
+Return only one JSON object with exactly these string keys: diagnosis, work_done, parts. No markdown.`;
+    const resp=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify({model,instructions,input:JSON.stringify(context),max_output_tokens:1400,store:false})});
     const payload=await resp.json().catch(()=>({}));const inTok=Number(payload?.usage?.input_tokens??0),outTok=Number(payload?.usage?.output_tokens??0);
     if(!resp.ok){if(usageEventId)await admin.rpc("complete_ai_usage",{p_event_id:usageEventId,p_status:"provider_error",p_input_tokens:inTok,p_output_tokens:outTok});return json({ok:false,configured:true,message:String(payload?.error?.message||`AI provider returned ${resp.status}`)},502);}
     const raw=extractOutputText(payload);if(!raw){if(usageEventId)await admin.rpc("complete_ai_usage",{p_event_id:usageEventId,p_status:"failed",p_input_tokens:inTok,p_output_tokens:outTok});return json({ok:false,configured:true,message:"AI provider returned an empty suggestion"},502);}

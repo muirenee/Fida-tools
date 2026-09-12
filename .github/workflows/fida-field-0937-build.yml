@@ -1,4 +1,4 @@
-name: Fida Field 0.9.38 Time Productivity
+name: Fida Field 0.9.39 Time Productivity Safe Insets
 
 on:
   push:
@@ -6,10 +6,7 @@ on:
     paths:
       - '.github/workflows/fida-field-0937-build.yml'
       - 'fida-field/app/build.gradle'
-      - 'fida-field/app/src/main/AndroidManifest.xml'
-      - 'fida-field/app/src/main/java/com/fidalix/fidafield/FidaFieldActivity.java'
       - 'fida-field/app/src/main/java/com/fidalix/fidafield/TimeProductivityActivity.java'
-      - 'fida-field/app/src/main/java/com/fidalix/fidafield/TimeProductivityCalculator.java'
   workflow_dispatch:
 
 permissions:
@@ -22,15 +19,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Verify 0.9.38 source
+      - name: Verify 0.9.39 source
         run: |
           set -euo pipefail
-          grep -q 'versionCode 41' fida-field/app/build.gradle
-          grep -q "versionName '0.9.38-test'" fida-field/app/build.gradle
-          grep -q 'class FidaFieldActivity extends MainActivity' fida-field/app/src/main/java/com/fidalix/fidafield/FidaFieldActivity.java
-          grep -q 'class TimeProductivityActivity' fida-field/app/src/main/java/com/fidalix/fidafield/TimeProductivityActivity.java
-          grep -q 'TimeProductivityActivity' fida-field/app/src/main/AndroidManifest.xml
-          grep -q 'FidaFieldActivity' fida-field/app/src/main/AndroidManifest.xml
+          grep -q 'versionCode 42' fida-field/app/build.gradle
+          grep -q "versionName '0.9.39-test'" fida-field/app/build.gradle
+          grep -q 'WindowInsetsCompat.Type.systemBars' fida-field/app/src/main/java/com/fidalix/fidafield/TimeProductivityActivity.java
+          grep -q 'barTop+safe.top' fida-field/app/src/main/java/com/fidalix/fidafield/TimeProductivityActivity.java
 
       - name: Reconstruct signing keystore
         run: |
@@ -62,8 +57,8 @@ jobs:
         run: |
           set -euo pipefail
           gradle :app:assembleDebug -PFIDA_OPEN_EDITION=true --stacktrace
-          cp app/build/outputs/apk/debug/app-debug.apk /tmp/Fida-Field-0.9.38-open-test.apk
-          sha256sum /tmp/Fida-Field-0.9.38-open-test.apk
+          cp app/build/outputs/apk/debug/app-debug.apk /tmp/Fida-Field-0.9.39-open-test.apk
+          sha256sum /tmp/Fida-Field-0.9.39-open-test.apk
 
       - name: Enable release signing
         run: |
@@ -84,9 +79,9 @@ jobs:
         run: |
           set -euo pipefail
           gradle :app:bundleRelease -PFIDA_OPEN_EDITION=false --stacktrace
-          cp app/build/outputs/bundle/release/app-release.aab /tmp/Fida-Field-0.9.38-play-release.aab
-          jarsigner -verify /tmp/Fida-Field-0.9.38-play-release.aab
-          sha256sum /tmp/Fida-Field-0.9.38-play-release.aab
+          cp app/build/outputs/bundle/release/app-release.aab /tmp/Fida-Field-0.9.39-play-release.aab
+          jarsigner -verify /tmp/Fida-Field-0.9.39-play-release.aab
+          sha256sum /tmp/Fida-Field-0.9.39-play-release.aab
 
       - name: Normalize source
         run: |
@@ -100,14 +95,14 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Fida-Field-0.9.38-open-test-apk
-          path: /tmp/Fida-Field-0.9.38-open-test.apk
+          name: Fida-Field-0.9.39-open-test-apk
+          path: /tmp/Fida-Field-0.9.39-open-test.apk
           retention-days: 14
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Fida-Field-0.9.38-play-release-aab
-          path: /tmp/Fida-Field-0.9.38-play-release.aab
+          name: Fida-Field-0.9.39-play-release-aab
+          path: /tmp/Fida-Field-0.9.39-play-release.aab
           retention-days: 14
 
       - name: Commit normalized source
@@ -117,7 +112,7 @@ jobs:
           git config user.email 'actions@users.noreply.github.com'
           git add fida-field
           if git diff --cached --quiet; then exit 0; fi
-          git commit -m 'Normalize Fida Field 0.9.38 source'
+          git commit -m 'Normalize Fida Field 0.9.39 source'
           git fetch origin fida-field-dev
           git rebase origin/fida-field-dev
           git push origin HEAD:fida-field-dev

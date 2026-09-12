@@ -130,3 +130,5 @@ jobs:
           git fetch origin fida-field-dev
           git rebase origin/fida-field-dev
           git push origin HEAD:fida-field-dev
+
+# trigger: 0.9.23

@@ -105,6 +105,31 @@ public class CloudSyncFoundation {
         return token;
     }
 
+    private String serviceTypesCacheKey(String workspaceId){return "service_types_json_"+(workspaceId==null||workspaceId.trim().isEmpty()?"local":workspaceId.trim());}
+    private String serviceTypesDirtyKey(String workspaceId){return "service_types_dirty_"+(workspaceId==null||workspaceId.trim().isEmpty()?"local":workspaceId.trim());}
+
+    public JSONArray cachedServiceTypes(String workspaceId){
+        String raw=prefs.getString(serviceTypesCacheKey(workspaceId),"");if(raw==null||raw.trim().isEmpty())return new JSONArray();
+        try{return new JSONArray(raw);}catch(Exception ignored){return new JSONArray();}
+    }
+
+    public void cacheServiceTypes(String workspaceId,JSONArray types,boolean dirty){
+        prefs.edit().putString(serviceTypesCacheKey(workspaceId),types==null?"[]":types.toString()).putBoolean(serviceTypesDirtyKey(workspaceId),dirty).apply();
+    }
+
+    public void syncServiceTypes(String workspaceId,boolean canManage)throws Exception{
+        if(workspaceId==null||workspaceId.trim().isEmpty()||!backendConfigured()||!signedIn())return;
+        String wid=workspaceId.trim();
+        if(canManage&&prefs.getBoolean(serviceTypesDirtyKey(wid),false)){
+            JSONArray local=cachedServiceTypes(wid);JSONArray cloud=client.select("service_checklist_templates","select=id,template_key&workspace_id=eq."+wid);java.util.HashSet<String> keep=new java.util.HashSet<>();
+            for(int i=0;i<local.length();i++){JSONObject o=local.optJSONObject(i);if(o==null)continue;String key=o.optString("template_key","").trim();if(key.isEmpty())key="custom-"+UUID.randomUUID();keep.add(key);JSONArray items=o.optJSONArray("items");if(items==null)items=new JSONArray();JSONObject body=new JSONObject().put("workspace_id",wid).put("template_key",key).put("name",o.optString("name","Service type")).put("items",items).put("sort_order",(i+1)*10).put("active",true).put("updated_by",userId()).put("updated_at",isoNow());client.upsert("service_checklist_templates","workspace_id,template_key",body);}
+            for(int i=0;i<cloud.length();i++){JSONObject o=cloud.optJSONObject(i);if(o==null)continue;String key=o.optString("template_key","");if(!keep.contains(key)){String id=o.optString("id","");if(!id.isEmpty())client.update("service_checklist_templates","id=eq."+id,new JSONObject().put("active",false).put("updated_by",userId()).put("updated_at",isoNow()));}}
+            prefs.edit().putBoolean(serviceTypesDirtyKey(wid),false).apply();
+        }
+        JSONArray rows=client.select("service_checklist_templates","select=template_key,name,items,sort_order,active&workspace_id=eq."+wid+"&active=eq.true&order=sort_order.asc,name.asc");
+        if(rows.length()>0)cacheServiceTypes(wid,rows,false);
+    }
+
     public JSONObject aiReportDraft(String workspaceId,String title,String problem,String diagnosis,String workDone,String parts)throws Exception{
         if(!backendConfigured())throw new Exception("Supabase backend is not configured");if(!signedIn())throw new Exception("Please sign in first");if(workspaceId==null||workspaceId.trim().isEmpty())throw new Exception("Cloud workspace is not bound");
         JSONObject body=new JSONObject().put("workspace_id",workspaceId).put("title",title==null?"":title).put("problem",problem==null?"":problem).put("diagnosis",diagnosis==null?"":diagnosis).put("work_done",workDone==null?"":workDone).put("parts",parts==null?"":parts);
@@ -146,6 +171,7 @@ public class CloudSyncFoundation {
             for(String type:pushOrder){JSONArray rows=client.select(tableFor(type),"select=*&workspace_id=eq."+workspaceId);for(int i=0;i<rows.length();i++){JSONObject o=rows.getJSONObject(i);String remote=o.optString("id","");if(remote.isEmpty())continue;if("job".equals(type))visibleJobIds.add(remote);if(isDeleted(o)){long before=db.localIdForRemote(type,remote);if(before>0&&!db.applyRemoteDeletion(type,remote)){deferred++;continue;}if(before>0)pulled++;continue;}long local=db.localIdForRemote(type,remote);if(local>0&&db.hasPendingSync(type,local)){db.recordSyncConflict(type,local,remote,"Cloud update deferred because this device has unsynced edits");deferred++;continue;}long saved=db.upsertRemoteEntity(type,o);if(saved>0)pulled++;}}
             if(!canManage)db.pruneInvisibleCloudJobs(visibleJobIds);
             syncBranding(workspaceId,canManage);
+            syncServiceTypes(workspaceId,canManage);
             CloudMediaSync.Result media=new CloudMediaSync(context,prefs,db,client).sync(workspaceId,canManage);
             for(Long localId:finalizeCompleted){JSONObject finalBody=payload("job",localId,workspaceId);if(finalBody!=null){client.upsert("jobs","id",finalBody);db.markEntitySynced("job",localId,finalBody.optString("id"));}}
             syncAssignmentHistory(workspaceId);

@@ -51,7 +51,8 @@ public class AccountTeamManager {
     public void bindCloudWorkspace(String cloudWorkspaceId,String name,String role){
         String old=workspaceId();String normalizedRole=normalizeRole(role);
         prefs.edit().putString(KEY_WORKSPACE_ID,clean(cloudWorkspaceId)).putString(KEY_WORKSPACE_NAME,clean(name))
-                .putString(KEY_ACCOUNT_ROLE,normalizedRole).putBoolean(KEY_CLOUD_WORKSPACE_BOUND,true).apply();
+                .putString(KEY_ACCOUNT_ROLE,normalizedRole).putBoolean(KEY_CLOUD_WORKSPACE_BOUND,true)
+                .putString(CloudSyncFoundation.KEY_WORKSPACE_ACCESS_ID,clean(cloudWorkspaceId)).putString(CloudSyncFoundation.KEY_WORKSPACE_ACCESS_STATE,CloudSyncFoundation.ACCESS_ACTIVE).apply();
         if(!old.isEmpty()&&!old.equals(cloudWorkspaceId))db.rebindWorkspace(old,cloudWorkspaceId);
     }
 

@@ -15,6 +15,12 @@ import java.util.UUID;
 public class CloudSyncFoundation {
     public static final String PROVIDER="Supabase";
     private static final Object SYNC_LOCK=new Object();
+    public static final String KEY_WORKSPACE_ACCESS_STATE="cloud_workspace_access_state";
+    public static final String KEY_WORKSPACE_ACCESS_ID="cloud_workspace_access_id";
+    public static final String KEY_WORKSPACE_ACCESS_CHECKED_AT="cloud_workspace_access_checked_at";
+    public static final String ACCESS_ACTIVE="Active";
+    public static final String ACCESS_REVOKED="Revoked";
+    public static final String ACCESS_UNKNOWN="Unknown";
     private final Context context;
     private final SharedPreferences prefs;
     private final AppDatabase db;
@@ -43,6 +49,10 @@ public class CloudSyncFoundation {
     public String lastSync(){String v=prefs.getString("cloud_last_sync","");return v.isEmpty()?"Never":v;}
     public String lastResult(){return prefs.getString("cloud_last_result","Not connected");}
     public String backendStatus(){if(!backendConfigured())return "Not configured";return signedIn()?"Connected":"Configured · sign-in required";}
+    public String workspaceAccessState(){return prefs.getString(KEY_WORKSPACE_ACCESS_STATE,ACCESS_UNKNOWN);}
+    public String workspaceAccessCheckedAt(){String v=prefs.getString(KEY_WORKSPACE_ACCESS_CHECKED_AT,"");return v.isEmpty()?"Never":v;}
+    public boolean workspaceAccessRevoked(String workspaceId){String id=prefs.getString(KEY_WORKSPACE_ACCESS_ID,"");return workspaceId!=null&&!workspaceId.isEmpty()&&workspaceId.equals(id)&&ACCESS_REVOKED.equals(prefs.getString(KEY_WORKSPACE_ACCESS_STATE,ACCESS_UNKNOWN));}
+    private void markWorkspaceAccess(String workspaceId,String state){prefs.edit().putString(KEY_WORKSPACE_ACCESS_ID,workspaceId==null?"":workspaceId).putString(KEY_WORKSPACE_ACCESS_STATE,state==null?ACCESS_UNKNOWN:state).putString(KEY_WORKSPACE_ACCESS_CHECKED_AT,db.now()).apply();}
 
     public SupabaseClientLite.AuthResult signUp(String name,String email,String password)throws Exception{return client.signUp(name,email,password);}
     public SupabaseClientLite.AuthResult signIn(String email,String password)throws Exception{return client.signIn(email,password);}
@@ -62,7 +72,18 @@ public class CloudSyncFoundation {
         JSONArray a=(JSONArray)raw;String preferred=prefs.getString(AccountTeamManager.KEY_WORKSPACE_ID,"");JSONObject chosen=null;
         for(int i=0;i<a.length();i++){JSONObject o=a.getJSONObject(i);if(preferred.equals(o.optString("workspace_id"))){chosen=o;break;}}
         if(chosen==null)chosen=a.getJSONObject(0);
-        return new WorkspaceMembership(chosen.optString("workspace_id"),chosen.optString("workspace_name"),AccountTeamManager.normalizeRole(chosen.optString("role")));
+        WorkspaceMembership m=new WorkspaceMembership(chosen.optString("workspace_id"),chosen.optString("workspace_name"),AccountTeamManager.normalizeRole(chosen.optString("role")));markWorkspaceAccess(m.id,ACCESS_ACTIVE);return m;
+    }
+
+    public WorkspaceMembership membershipForWorkspace(String workspaceId)throws Exception{
+        if(workspaceId==null||workspaceId.trim().isEmpty())return null;Object raw=client.rpc("list_my_workspaces",new JSONObject());if(!(raw instanceof JSONArray))return null;JSONArray a=(JSONArray)raw;
+        for(int i=0;i<a.length();i++){JSONObject o=a.getJSONObject(i);if(workspaceId.equals(o.optString("workspace_id"))){WorkspaceMembership m=new WorkspaceMembership(o.optString("workspace_id"),o.optString("workspace_name"),AccountTeamManager.normalizeRole(o.optString("role")));markWorkspaceAccess(workspaceId,ACCESS_ACTIVE);return m;}}return null;
+    }
+
+    public WorkspaceMembership refreshWorkspaceAccess(String workspaceId)throws Exception{
+        if(!backendConfigured())throw new Exception("Supabase backend is not configured");if(!signedIn())throw new Exception("Please sign in first");WorkspaceMembership m=membershipForWorkspace(workspaceId);
+        if(m==null){markWorkspaceAccess(workspaceId,ACCESS_REVOKED);markSyncResult(false,db.now(),"Workspace access disabled or removed");return null;}
+        prefs.edit().putString(AccountTeamManager.KEY_WORKSPACE_NAME,m.name).putString(AccountTeamManager.KEY_ACCOUNT_ROLE,m.role).putBoolean(AccountTeamManager.KEY_CLOUD_WORKSPACE_BOUND,true).apply();return m;
     }
 
     public WorkspaceMembership createWorkspace(String name)throws Exception{
@@ -107,6 +128,7 @@ public class CloudSyncFoundation {
     public SyncResult syncNow(String workspaceId,boolean canManage)throws Exception{
         synchronized(SYNC_LOCK){
             if(!backendConfigured())throw new Exception("Supabase backend is not configured");if(!signedIn())throw new Exception("Please sign in first");if(workspaceId==null||workspaceId.isEmpty())throw new Exception("Cloud workspace is not bound");
+            WorkspaceMembership verified=refreshWorkspaceAccess(workspaceId);if(verified==null)throw new Exception("Workspace access is disabled or has been removed. Ask the workspace Owner/Admin to re-enable your account, then check access again.");canManage=AccountTeamManager.ROLE_OWNER.equals(verified.role)||AccountTeamManager.ROLE_ADMIN.equals(verified.role);
             int pushed=0,pulled=0,deferred=0;if(!canManage)db.discardManagerOnlyPendingChanges();String[] pushOrder=canManage?new String[]{"customer","site","asset","technician","job"}:new String[]{"job"};String[] deleteOrder=canManage?new String[]{"job","asset","site","customer","technician"}:new String[]{"job"};List<AppDatabase.Row> pending=db.pendingBusinessSyncRows();java.util.ArrayList<Long> finalizeCompleted=new java.util.ArrayList<>();java.util.HashSet<String> visibleJobIds=new java.util.HashSet<>();
             for(String type:deleteOrder){for(AppDatabase.Row q:pending){if(!type.equals(q.s("entity_type"))||!"delete".equals(q.s("operation")))continue;long localId=parseLong(q.s("entity_id"));if(localId<=0)continue;String remote=q.s("remote_uuid");if(remote.isEmpty()){db.markDeletionSynced(type,localId,"");continue;}client.update(tableFor(type),"id=eq."+remote+"&workspace_id=eq."+workspaceId,new JSONObject().put("deleted_at",isoNow()));db.markDeletionSynced(type,localId,remote);pushed++;}}
             for(String type:pushOrder){for(AppDatabase.Row q:pending){if(!type.equals(q.s("entity_type"))||"delete".equals(q.s("operation")))continue;long localId=parseLong(q.s("entity_id"));if(localId<=0)continue;JSONObject body=payload(type,localId,workspaceId);if(body==null)continue;String remoteId=body.optString("id");if("technician".equals(type)){String canonical=canonicalTechnicianRemoteId(workspaceId,body);if(!canonical.isEmpty()&&!canonical.equals(remoteId)){long mappedLocal=db.localIdForRemote("technician",canonical);if(mappedLocal>0&&mappedLocal!=localId)localId=db.reconcileTechnicianIdentity(localId,mappedLocal,canonical);else db.bindRemoteUuid("technician",localId,canonical);body.put("id",canonical);remoteId=canonical;}}if("job".equals(type)&&!canManage&&"Completed".equals(body.optString("status"))){JSONObject staged=new JSONObject(body.toString());staged.put("status","In Progress");client.upsert(tableFor(type),"id",staged);db.bindRemoteUuid(type,localId,remoteId);finalizeCompleted.add(localId);}else{client.upsert(tableFor(type),"id",body);db.markEntitySynced(type,localId,remoteId);}pushed++;}}

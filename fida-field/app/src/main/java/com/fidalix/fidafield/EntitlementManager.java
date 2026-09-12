@@ -56,6 +56,7 @@ public class EntitlementManager {
 
     public boolean canExportCsv() { return isPro(); }
     public boolean canUseCustomBranding() { return isPro(); }
+    public boolean canUseAiReportAssistant() { return isPro(); }
 
     public String usageSummary() {
         if (isOpenEdition()) return "Unlimited · internal edition";

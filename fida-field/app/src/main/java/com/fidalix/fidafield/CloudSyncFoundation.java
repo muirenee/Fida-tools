@@ -105,6 +105,12 @@ public class CloudSyncFoundation {
         return token;
     }
 
+    public JSONObject aiReportDraft(String workspaceId,String title,String problem,String diagnosis,String workDone,String parts)throws Exception{
+        if(!backendConfigured())throw new Exception("Supabase backend is not configured");if(!signedIn())throw new Exception("Please sign in first");if(workspaceId==null||workspaceId.trim().isEmpty())throw new Exception("Cloud workspace is not bound");
+        JSONObject body=new JSONObject().put("workspace_id",workspaceId).put("title",title==null?"":title).put("problem",problem==null?"":problem).put("diagnosis",diagnosis==null?"":diagnosis).put("work_done",workDone==null?"":workDone).put("parts",parts==null?"":parts);
+        Object raw=client.invokeFunction("ai-report-assistant",body);if(!(raw instanceof JSONObject))throw new Exception("AI report assistant returned an unexpected response");JSONObject o=(JSONObject)raw;if(!o.optBoolean("ok",false))throw new Exception(o.optString("message","AI report assistant failed"));JSONObject draft=o.optJSONObject("draft");if(draft==null)throw new Exception("AI report assistant returned no draft");return draft;
+    }
+
     public JSONObject sendInviteEmail(String token)throws Exception{
         Object raw=client.invokeFunction("send-workspace-invite",new JSONObject().put("token",token==null?"":token.trim()));
         if(raw instanceof JSONObject)return (JSONObject)raw;

@@ -1,11 +1,15 @@
-name: Fida Field 0.9.37 Sticky Forms
+name: Fida Field 0.9.38 Time Productivity
 
 on:
   push:
     branches: [ fida-field-dev ]
     paths:
       - '.github/workflows/fida-field-0937-build.yml'
-      - '.github/scripts/fida_field_0937_sticky_forms.py'
+      - 'fida-field/app/build.gradle'
+      - 'fida-field/app/src/main/AndroidManifest.xml'
+      - 'fida-field/app/src/main/java/com/fidalix/fidafield/FidaFieldActivity.java'
+      - 'fida-field/app/src/main/java/com/fidalix/fidafield/TimeProductivityActivity.java'
+      - 'fida-field/app/src/main/java/com/fidalix/fidafield/TimeProductivityCalculator.java'
   workflow_dispatch:
 
 permissions:
@@ -18,15 +22,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Apply 0.9.37 sticky forms
-        run: python3 .github/scripts/fida_field_0937_sticky_forms.py
-
-      - name: Verify source
+      - name: Verify 0.9.38 source
         run: |
           set -euo pipefail
-          grep -q 'versionCode 40' fida-field/app/build.gradle
-          grep -q "versionName '0.9.37-test'" fida-field/app/build.gradle
-          test "$(grep -o 'setCanceledOnTouchOutside(false)' fida-field/app/src/main/java/com/fidalix/fidafield/MainActivity.java | wc -l)" -ge 1
+          grep -q 'versionCode 41' fida-field/app/build.gradle
+          grep -q "versionName '0.9.38-test'" fida-field/app/build.gradle
+          grep -q 'class FidaFieldActivity extends MainActivity' fida-field/app/src/main/java/com/fidalix/fidafield/FidaFieldActivity.java
+          grep -q 'class TimeProductivityActivity' fida-field/app/src/main/java/com/fidalix/fidafield/TimeProductivityActivity.java
+          grep -q 'TimeProductivityActivity' fida-field/app/src/main/AndroidManifest.xml
+          grep -q 'FidaFieldActivity' fida-field/app/src/main/AndroidManifest.xml
 
       - name: Reconstruct signing keystore
         run: |
@@ -58,8 +62,8 @@ jobs:
         run: |
           set -euo pipefail
           gradle :app:assembleDebug -PFIDA_OPEN_EDITION=true --stacktrace
-          cp app/build/outputs/apk/debug/app-debug.apk /tmp/Fida-Field-0.9.37-open-test.apk
-          sha256sum /tmp/Fida-Field-0.9.37-open-test.apk
+          cp app/build/outputs/apk/debug/app-debug.apk /tmp/Fida-Field-0.9.38-open-test.apk
+          sha256sum /tmp/Fida-Field-0.9.38-open-test.apk
 
       - name: Enable release signing
         run: |
@@ -80,9 +84,9 @@ jobs:
         run: |
           set -euo pipefail
           gradle :app:bundleRelease -PFIDA_OPEN_EDITION=false --stacktrace
-          cp app/build/outputs/bundle/release/app-release.aab /tmp/Fida-Field-0.9.37-play-release.aab
-          jarsigner -verify /tmp/Fida-Field-0.9.37-play-release.aab
-          sha256sum /tmp/Fida-Field-0.9.37-play-release.aab
+          cp app/build/outputs/bundle/release/app-release.aab /tmp/Fida-Field-0.9.38-play-release.aab
+          jarsigner -verify /tmp/Fida-Field-0.9.38-play-release.aab
+          sha256sum /tmp/Fida-Field-0.9.38-play-release.aab
 
       - name: Normalize source
         run: |
@@ -96,14 +100,14 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Fida-Field-0.9.37-open-test-apk
-          path: /tmp/Fida-Field-0.9.37-open-test.apk
+          name: Fida-Field-0.9.38-open-test-apk
+          path: /tmp/Fida-Field-0.9.38-open-test.apk
           retention-days: 14
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Fida-Field-0.9.37-play-release-aab
-          path: /tmp/Fida-Field-0.9.37-play-release.aab
+          name: Fida-Field-0.9.38-play-release-aab
+          path: /tmp/Fida-Field-0.9.38-play-release.aab
           retention-days: 14
 
       - name: Commit normalized source
@@ -113,7 +117,7 @@ jobs:
           git config user.email 'actions@users.noreply.github.com'
           git add fida-field
           if git diff --cached --quiet; then exit 0; fi
-          git commit -m 'Fida Field 0.9.37 sticky forms'
+          git commit -m 'Normalize Fida Field 0.9.38 source'
           git fetch origin fida-field-dev
           git rebase origin/fida-field-dev
           git push origin HEAD:fida-field-dev

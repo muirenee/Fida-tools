@@ -389,6 +389,11 @@ public class MainActivity extends AppCompatActivity {
         setHeader("Plan & Subscription",BuildConfig.OPEN_EDITION?"Fidalix internal edition":"Company workspace subscription");clear();LinearLayout b=body(page());MaterialButton back=outlineButton("← Back");back.setOnClickListener(v->showMore());b.addView(back);
         refreshEntitlementsAndBranding();
         b.addView(section("Current plan"));b.addView(info("Plan",entitlements.planName()));b.addView(info("Entitlement",entitlements.entitlementSource()));b.addView(info("Subscription scope",BuildConfig.OPEN_EDITION?"Internal Fidalix build":"Company / workspace"));b.addView(info("Monthly usage",entitlements.usageSummary()));
+        if(cloudSync!=null&&accountTeam!=null&&cloudSync.signedIn()&&accountTeam.hasCloudWorkspace()&&accountTeam.canManageTeam()){
+            b.addView(section("AI report assistant"));TextView aiState=paragraph("Loading workspace AI allowance…");b.addView(aiState);MaterialButton aiRefresh=outlineButton("Refresh AI usage");aiRefresh.setOnClickListener(v->refreshAiUsage(aiState));b.addView(aiRefresh);refreshAiUsage(aiState);
+        }else if(entitlements.canUseAiReportAssistant()){
+            b.addView(section("AI report assistant"));b.addView(paragraph("AI report writing is available with this plan. Owner/Admin can view the workspace allowance after signing in to the cloud workspace."));
+        }
         if(BuildConfig.OPEN_EDITION){
             b.addView(section("Fidalix Open"));b.addView(paragraph("This internal company edition does not use Google Play Billing. Pro capabilities are permanently enabled by the signed build itself, while cloud accounts, workspace security and Supabase synchronization continue to work normally. Keep this APK for authorized internal distribution."));b.addView(info("Billing","Not required"));b.addView(info("Distribution","Direct/internal APK"));return;
         }
@@ -401,6 +406,12 @@ public class MainActivity extends AppCompatActivity {
         if(manager){MaterialButton buyMonthly=button("Monthly workspace Pro · "+monthly);buyMonthly.setOnClickListener(v->{if(billingManager!=null)billingManager.purchase(this,EntitlementManager.PRODUCT_PRO_MONTHLY);});b.addView(buyMonthly);MaterialButton buyAnnual=button("Annual workspace Pro · "+annual);buyAnnual.setOnClickListener(v->{if(billingManager!=null)billingManager.purchase(this,EntitlementManager.PRODUCT_PRO_ANNUAL);});b.addView(buyAnnual);MaterialButton restore=outlineButton("Restore purchaser's Google Play subscription");restore.setOnClickListener(v->{if(billingManager!=null){billingManager.restore();toast("Checking Google Play purchase…");}});b.addView(restore);}
         MaterialButton refresh=outlineButton("Refresh workspace plan");refresh.setEnabled(readyAccount);refresh.setOnClickListener(v->{if(billingManager!=null){billingManager.refreshServerEntitlement();toast("Refreshing workspace entitlement…");}});b.addView(refresh);
         b.addView(paragraph("Field-only people who do not sign in do not consume a separate app subscription. Workspace members can install Fida Field on their own devices and use the same company plan according to their access role."));
+    }
+
+    private void refreshAiUsage(TextView host){
+        if(host==null||cloudSync==null||accountTeam==null||!cloudSync.signedIn()||!accountTeam.hasCloudWorkspace()){if(host!=null)host.setText("Cloud workspace sign-in required.");return;}
+        host.setText("Refreshing workspace AI usage…");
+        new Thread(()->{try{JSONObject u=cloudSync.aiUsage(accountTeam.workspaceId());int used=u.optInt("used_this_month",0),limit=u.optInt("monthly_limit",0),remaining=u.optInt("remaining",0);boolean enabled=u.optBoolean("enabled",false),entitled=u.optBoolean("entitled",false);String period=u.optString("period_start","")+" → "+u.optString("period_end","");String msg=(enabled?"Service enabled":"Service paused")+" · "+(entitled?"Workspace entitled":"No active AI entitlement")+"\nThis month: "+used+" / "+limit+" assists · "+remaining+" remaining"+(period.trim().equals("→")?"":"\nPeriod: "+period);runOnUiThread(()->host.setText(msg));}catch(Exception e){String msg=e.getMessage()==null?e.getClass().getSimpleName():e.getMessage();runOnUiThread(()->host.setText("AI usage unavailable: "+msg));}}).start();
     }
 
     private void showBranding(){
@@ -516,7 +527,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void showUpgradeRequired(String feature){
-        new MaterialAlertDialogBuilder(this).setTitle(feature+" requires Pro").setMessage("The Free plan includes "+EntitlementManager.FREE_MONTHLY_REPORT_LIMIT+" new service reports per month. Pro unlocks unlimited reports, CSV exports and custom company branding. Use More → Plan & subscription to subscribe the company workspace. Fidalix Open builds are enabled internally without Google Play Billing.").setNegativeButton("Not now",null).setPositiveButton("View plan",(d,w)->showPlan()).show();
+        new MaterialAlertDialogBuilder(this).setTitle(feature+" requires Pro").setMessage("The Free plan includes "+EntitlementManager.FREE_MONTHLY_REPORT_LIMIT+" new service reports per month. Pro unlocks unlimited reports, CSV exports, custom company branding and the AI report assistant. Use More → Plan & subscription to subscribe the company workspace. Fidalix Open builds are enabled internally without Google Play Billing.").setNegativeButton("Not now",null).setPositiveButton("View plan",(d,w)->showPlan()).show();
     }
 
     private void showSettings(){

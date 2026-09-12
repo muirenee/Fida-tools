@@ -111,6 +111,11 @@ public class CloudSyncFoundation {
         Object raw=client.invokeFunction("ai-report-assistant",body);if(!(raw instanceof JSONObject))throw new Exception("AI report assistant returned an unexpected response");JSONObject o=(JSONObject)raw;if(!o.optBoolean("ok",false))throw new Exception(o.optString("message","AI report assistant failed"));JSONObject draft=o.optJSONObject("draft");if(draft==null)throw new Exception("AI report assistant returned no draft");return draft;
     }
 
+    public JSONObject aiUsage(String workspaceId)throws Exception{
+        if(!backendConfigured())throw new Exception("Supabase backend is not configured");if(!signedIn())throw new Exception("Please sign in first");if(workspaceId==null||workspaceId.trim().isEmpty())throw new Exception("Cloud workspace is not bound");
+        Object raw=client.invokeFunction("ai-report-assistant",new JSONObject().put("workspace_id",workspaceId).put("action","usage"));if(!(raw instanceof JSONObject))throw new Exception("AI usage service returned an unexpected response");JSONObject o=(JSONObject)raw;if(!o.optBoolean("ok",false))throw new Exception(o.optString("message","Could not load AI usage"));JSONObject usage=o.optJSONObject("usage");if(usage==null)throw new Exception("AI usage data was not returned");return usage;
+    }
+
     public JSONObject sendInviteEmail(String token)throws Exception{
         Object raw=client.invokeFunction("send-workspace-invite",new JSONObject().put("token",token==null?"":token.trim()));
         if(raw instanceof JSONObject)return (JSONObject)raw;

@@ -21,12 +21,13 @@ import java.util.Set;
 
 public class AppDatabase extends SQLiteOpenHelper {
     public static final String DB_NAME = "fida_field.db";
-    public static final int DB_VERSION = 10;
+    public static final int DB_VERSION = 11;
 
     public static class Row extends HashMap<String, String> {
         public long id() { try { return Long.parseLong(getOrDefault("id", "0")); } catch (Exception e) { return 0; } }
         public String s(String k) { return getOrDefault(k, ""); }
         public int i(String k) { try { return Integer.parseInt(getOrDefault(k, "0")); } catch (Exception e) { return 0; } }
+        public long l(String k) { try { return Long.parseLong(getOrDefault(k, "0")); } catch (Exception e) { return 0L; } }
     }
 
     public AppDatabase(Context context) { super(context, DB_NAME, null, DB_VERSION); }
@@ -43,7 +44,7 @@ public class AppDatabase extends SQLiteOpenHelper {
         db.execSQL("CREATE INDEX idx_customer_sites_customer ON customer_sites(customer_id,site_id)");
         db.execSQL("CREATE INDEX idx_customer_sites_site ON customer_sites(site_id,customer_id)");
         db.execSQL("CREATE TABLE assets (id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id INTEGER, site_id INTEGER, tag TEXT NOT NULL UNIQUE, name TEXT NOT NULL, category TEXT, make_model TEXT, serial TEXT, location TEXT, notes TEXT, interval_days INTEGER DEFAULT 0, next_service TEXT, created_at TEXT NOT NULL, FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE SET NULL, FOREIGN KEY(site_id) REFERENCES sites(id) ON DELETE SET NULL)");
-        db.execSQL("CREATE TABLE jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, report_no TEXT NOT NULL UNIQUE, customer_id INTEGER, site_id INTEGER, asset_id INTEGER, title TEXT NOT NULL, problem TEXT, diagnosis TEXT, work_done TEXT, parts TEXT, technician TEXT, technician_id INTEGER, priority TEXT DEFAULT 'Normal', status TEXT DEFAULT 'Open', job_date TEXT NOT NULL, next_service TEXT, signature_path TEXT, customer_name_signed TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE SET NULL, FOREIGN KEY(site_id) REFERENCES sites(id) ON DELETE SET NULL, FOREIGN KEY(asset_id) REFERENCES assets(id) ON DELETE SET NULL)");
+        db.execSQL("CREATE TABLE jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, report_no TEXT NOT NULL UNIQUE, customer_id INTEGER, site_id INTEGER, asset_id INTEGER, title TEXT NOT NULL, problem TEXT, diagnosis TEXT, work_done TEXT, parts TEXT, technician TEXT, technician_id INTEGER, priority TEXT DEFAULT 'Normal', status TEXT DEFAULT 'Open', job_date TEXT NOT NULL, next_service TEXT, service_started_at_ms INTEGER DEFAULT 0, service_completed_at_ms INTEGER DEFAULT 0, service_duration_minutes INTEGER DEFAULT 0, signature_path TEXT, customer_name_signed TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE SET NULL, FOREIGN KEY(site_id) REFERENCES sites(id) ON DELETE SET NULL, FOREIGN KEY(asset_id) REFERENCES assets(id) ON DELETE SET NULL)");
         db.execSQL("CREATE TABLE job_photos (id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER NOT NULL, uri TEXT NOT NULL, caption TEXT, created_at TEXT NOT NULL, FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE)");
         db.execSQL("CREATE TABLE maintenance_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, asset_id INTEGER NOT NULL, job_id INTEGER, service_date TEXT NOT NULL, notes TEXT, next_service TEXT, created_at TEXT NOT NULL, FOREIGN KEY(asset_id) REFERENCES assets(id) ON DELETE CASCADE, FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE SET NULL)");
         db.execSQL("CREATE TABLE technicians (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, role TEXT, phone TEXT, email TEXT, user_uuid TEXT, active INTEGER DEFAULT 1, created_at TEXT NOT NULL)");
@@ -116,6 +117,11 @@ public class AppDatabase extends SQLiteOpenHelper {
             db.execSQL("CREATE INDEX IF NOT EXISTS idx_customer_sites_site ON customer_sites(site_id,customer_id)");
             db.execSQL("INSERT OR IGNORE INTO customer_sites(customer_id,site_id) SELECT customer_id,id FROM sites WHERE customer_id IS NOT NULL");
         }
+        if(oldVersion<11){
+            db.execSQL("ALTER TABLE jobs ADD COLUMN service_started_at_ms INTEGER DEFAULT 0");
+            db.execSQL("ALTER TABLE jobs ADD COLUMN service_completed_at_ms INTEGER DEFAULT 0");
+            db.execSQL("ALTER TABLE jobs ADD COLUMN service_duration_minutes INTEGER DEFAULT 0");
+        }
     }
 
     public String today() { return new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new Date()); }
@@ -185,7 +191,7 @@ public class AppDatabase extends SQLiteOpenHelper {
         else if("site".equals(type)){long cid=remoteLocal("customer",o,"customer_id");if(cid<=0)return 0;jt(v,o,"name","address","contact","phone","notes");v.put("customer_id",cid);if(local==0){v.put("created_at",now());local=d.insertOrThrow("sites",null,v);}else d.update("sites",v,"id=?",new String[]{String.valueOf(local)});}
         else if("asset".equals(type)){if(local==0&&!j(o,"tag").isEmpty())local=getAssetByTag(j(o,"tag")).id();if(local>0&&hasPendingSync(type,local)){recordSyncConflict(type,local,remote,"Cloud update deferred because this device has unsynced edits");return local;}jt(v,o,"tag","name","category","make_model","serial","location","notes","next_service");long cid=remoteLocal("customer",o,"customer_id"),sid=remoteLocal("site",o,"site_id");if(cid>0)v.put("customer_id",cid);else v.putNull("customer_id");if(sid>0)v.put("site_id",sid);else v.putNull("site_id");v.put("interval_days",o.optInt("interval_days",0));if(local==0){v.put("created_at",now());local=d.insertOrThrow("assets",null,v);}else d.update("assets",v,"id=?",new String[]{String.valueOf(local)});}
         else if("technician".equals(type)){String linkedUser=j(o,"user_id");if(local==0&&!linkedUser.isEmpty())local=technicianForUser(linkedUser).id();jt(v,o,"name","role","phone","email");if(linkedUser.isEmpty())v.putNull("user_uuid");else v.put("user_uuid",linkedUser);v.put("active",o.optBoolean("active",true)?1:0);if(local==0){v.put("created_at",now());local=d.insertOrThrow("technicians",null,v);}else d.update("technicians",v,"id=?",new String[]{String.valueOf(local)});}
-        else if("job".equals(type)){if(local==0&&!j(o,"report_no").isEmpty())local=one("SELECT * FROM jobs WHERE report_no=?",new String[]{j(o,"report_no")}).id();if(local>0&&hasPendingSync(type,local)){recordSyncConflict(type,local,remote,"Cloud update deferred because this device has unsynced edits");return local;}jt(v,o,"report_no","title","problem","diagnosis","work_done","parts","priority","status","job_date","next_service","customer_name_signed");v.put("technician",j(o,"technician_name"));long tid=remoteLocal("technician",o,"technician_id");if(tid>0)v.put("technician_id",tid);else v.putNull("technician_id");long cid=remoteLocal("customer",o,"customer_id"),sid=remoteLocal("site",o,"site_id"),aid=remoteLocal("asset",o,"asset_id");if(cid>0)v.put("customer_id",cid);else v.putNull("customer_id");if(sid>0)v.put("site_id",sid);else v.putNull("site_id");if(aid>0)v.put("asset_id",aid);else v.putNull("asset_id");v.put("updated_at",now());if(local==0){v.put("created_at",now());local=d.insertOrThrow("jobs",null,v);}else d.update("jobs",v,"id=?",new String[]{String.valueOf(local)});}
+        else if("job".equals(type)){if(local==0&&!j(o,"report_no").isEmpty())local=one("SELECT * FROM jobs WHERE report_no=?",new String[]{j(o,"report_no")}).id();if(local>0&&hasPendingSync(type,local)){recordSyncConflict(type,local,remote,"Cloud update deferred because this device has unsynced edits");return local;}jt(v,o,"report_no","title","problem","diagnosis","work_done","parts","priority","status","job_date","next_service","customer_name_signed");v.put("service_started_at_ms",o.optLong("service_started_at_ms",0L));v.put("service_completed_at_ms",o.optLong("service_completed_at_ms",0L));v.put("service_duration_minutes",o.optInt("service_duration_minutes",0));v.put("technician",j(o,"technician_name"));long tid=remoteLocal("technician",o,"technician_id");if(tid>0)v.put("technician_id",tid);else v.putNull("technician_id");long cid=remoteLocal("customer",o,"customer_id"),sid=remoteLocal("site",o,"site_id"),aid=remoteLocal("asset",o,"asset_id");if(cid>0)v.put("customer_id",cid);else v.putNull("customer_id");if(sid>0)v.put("site_id",sid);else v.putNull("site_id");if(aid>0)v.put("asset_id",aid);else v.putNull("asset_id");v.put("updated_at",now());if(local==0){v.put("created_at",now());local=d.insertOrThrow("jobs",null,v);}else d.update("jobs",v,"id=?",new String[]{String.valueOf(local)});}
         else return 0;bindRemoteUuid(type,local,remote);d.delete("sync_queue","entity_type=? AND entity_id=?",new String[]{type,String.valueOf(local)});resolveSyncConflict(type,local);return local;
     }
 
@@ -401,6 +407,14 @@ public class AppDatabase extends SQLiteOpenHelper {
 
     public void setJobStatus(long jobId, String status) {
         ContentValues v=new ContentValues();v.put("status",status);v.put("updated_at",now());getWritableDatabase().update("jobs",v,"id=?",new String[]{String.valueOf(jobId)});queueSync("job",jobId,"upsert");
+    }
+
+    public void startJobService(long jobId){
+        Row job=getJob(jobId);if(job.id()==0||"Completed".equalsIgnoreCase(job.s("status")))return;ContentValues v=new ContentValues();if(job.l("service_started_at_ms")<=0)v.put("service_started_at_ms",System.currentTimeMillis());if("Open".equalsIgnoreCase(job.s("status")))v.put("status","In Progress");v.put("updated_at",now());getWritableDatabase().update("jobs",v,"id=?",new String[]{String.valueOf(jobId)});queueSync("job",jobId,"upsert");
+    }
+
+    public void completeJobService(long jobId){
+        Row job=getJob(jobId);if(job.id()==0)return;long started=job.l("service_started_at_ms"),finished=job.l("service_completed_at_ms");if(finished<=0)finished=System.currentTimeMillis();int minutes=0;if(started>0&&finished>=started)minutes=(int)Math.max(0L,Math.round((finished-started)/60000.0));ContentValues v=new ContentValues();v.put("service_completed_at_ms",finished);v.put("service_duration_minutes",minutes);v.put("status","Completed");v.put("updated_at",now());getWritableDatabase().update("jobs",v,"id=?",new String[]{String.valueOf(jobId)});queueSync("job",jobId,"upsert");
     }
 
     private void rehomeSharedSitesBeforeCustomerDelete(long customerId,boolean queueChanges){

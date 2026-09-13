@@ -36,8 +36,8 @@ replace_once(
 # Forgot-password action on both ordinary sign-in and invited-user sign-in.
 replace_once(
     MAIN,
-    '        b.addView(signIn);\n        b.addView(paragraph("Fallback: if the email button did not open Fida Field, you can still sign in normally and use the invitation code shown in the email."));',
-    '        b.addView(signIn);\n        MaterialButton forgotInvite=outlineButton("Forgot password?");forgotInvite.setOnClickListener(v->showForgotPassword(val(email)));b.addView(forgotInvite);\n        b.addView(paragraph("Fallback: if the email button did not open Fida Field, you can still sign in normally and use the invitation code shown in the email."));'
+    'b.addView(signIn);\n        b.addView(paragraph("Fallback: if the email button did not open Fida Field, you can still sign in normally and use the invitation code shown in the email."));',
+    'b.addView(signIn);\n        MaterialButton forgotInvite=outlineButton("Forgot password?");forgotInvite.setOnClickListener(v->showForgotPassword(val(email)));b.addView(forgotInvite);\n        b.addView(paragraph("Fallback: if the email button did not open Fida Field, you can still sign in normally and use the invitation code shown in the email."));'
 )
 
 replace_once(
@@ -77,9 +77,6 @@ import android.widget.TextView;
 import androidx.appcompat.app.AppCompatActivity;
 
 import com.google.android.material.button.MaterialButton;
-import com.google.android.material.card.MaterialCardView;
-
-import org.json.JSONObject;
 
 /** Handles the Supabase password-recovery deep link and lets the user choose a new password. */
 public class PasswordResetActivity extends AppCompatActivity {
@@ -113,7 +110,7 @@ public class PasswordResetActivity extends AppCompatActivity {
         EditText password=field("New password");password.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);EditText confirm=field("Confirm new password");confirm.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);body.addView(password);body.addView(confirm);
         TextView hint=text("Use at least 8 characters. Your workspace, jobs, history and permissions will stay unchanged.");hint.setTextSize(12);body.addView(hint);
         MaterialButton save=primary("Update password");body.addView(save);MaterialButton cancel=secondary("Cancel recovery");body.addView(cancel);
-        save.setOnClickListener(v->{String p=value(password),c=value(confirm);if(p.length()<8){password.setError("Use at least 8 characters");return;}if(!p.equals(c)){confirm.setError("Passwords do not match");return;}save.setEnabled(false);save.setText("Updating…");new Thread(()->{try{SupabaseClientLite.AuthResult ar=client.updatePassword(p);try{AppDatabase db=new AppDatabase(this);AccountTeamManager team=new AccountTeamManager(prefs,db);String name=team.accountName();if(name==null||name.trim().isEmpty())name=ar.email;team.bindCloudAccount(ar.userId,name,ar.email);CloudSyncFoundation cloud=new CloudSyncFoundation(this,prefs,db);CloudSyncFoundation.WorkspaceMembership wm=cloud.firstWorkspace();if(wm!=null)team.bindCloudWorkspace(wm.id,wm.name,wm.role);}catch(Exception ignored){}runOnUiThread(()->showSuccess());}catch(Exception e){runOnUiThread(()->{save.setEnabled(true);save.setText("Update password");showError(e.getMessage());});}}).start();});
+        save.setOnClickListener(v->{String p=value(password),c=value(confirm);if(p.length()<8){password.setError("Use at least 8 characters");return;}if(!p.equals(c)){confirm.setError("Passwords do not match");return;}save.setEnabled(false);save.setText("Updating…");new Thread(()->{try{SupabaseClientLite.AuthResult ar=client.updatePassword(p);try{AppDatabase db=new AppDatabase(this);AccountTeamManager team=new AccountTeamManager(prefs,db);String name=team.accountName();if(name==null||name.trim().isEmpty())name=ar.email;team.bindCloudAccount(ar.userId,name,ar.email);CloudSyncFoundation cloud=new CloudSyncFoundation(this,prefs,db);CloudSyncFoundation.WorkspaceMembership wm=cloud.firstWorkspace();if(wm!=null)team.bindCloudWorkspace(wm.id,wm.name,wm.role);db.close();}catch(Exception ignored){}runOnUiThread(this::showSuccess);}catch(Exception e){runOnUiThread(()->{save.setEnabled(true);save.setText("Update password");showError(e.getMessage());});}}).start();});
         cancel.setOnClickListener(v->{client.clearSession();openFidaField();});
     }
 
@@ -122,7 +119,7 @@ public class PasswordResetActivity extends AppCompatActivity {
     private void showError(String message){new com.google.android.material.dialog.MaterialAlertDialogBuilder(this).setTitle("Could not update password").setMessage(message==null||message.trim().isEmpty()?"Please request a new reset link and try again.":message).setPositiveButton("OK",null).show();}
     private void openFidaField(){Intent i=new Intent(this,FidaFieldActivity.class);i.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP|Intent.FLAG_ACTIVITY_NEW_TASK);startActivity(i);finish();}
 
-    private String param(Uri uri,String name){if(uri==null)return "";String q=uri.getQueryParameter(name);if(q!=null&&!q.isEmpty())return q;String f=uri.getFragment();if(f==null||f.isEmpty())return "";try{return Uri.parse("https://local/?"+f).getQueryParameter(name)==null?"":Uri.parse("https://local/?"+f).getQueryParameter(name);}catch(Exception e){return "";}}
+    private String param(Uri uri,String name){if(uri==null)return "";String q=uri.getQueryParameter(name);if(q!=null&&!q.isEmpty())return q;String f=uri.getFragment();if(f==null||f.isEmpty())return "";try{Uri x=Uri.parse("https://local/?"+f);String v=x.getQueryParameter(name);return v==null?"":v;}catch(Exception e){return "";}}
     private long parseLong(String value,long fallback){try{return Long.parseLong(value);}catch(Exception e){return fallback;}}
     private String value(EditText e){return e.getText()==null?"":e.getText().toString().trim();}
     private TextView title(String s){TextView v=new TextView(this);v.setText(s);v.setTextSize(24);v.setTextColor(0xFF2D312D);v.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);v.setPadding(0,0,0,dp(10));return v;}

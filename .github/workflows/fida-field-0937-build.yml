@@ -1,12 +1,10 @@
-name: Fida Field 0.9.39 Time Productivity Safe Insets
+name: Fida Field 0.9.40 Sync Queue Repair
 
 on:
   push:
     branches: [ fida-field-dev ]
     paths:
       - '.github/workflows/fida-field-0937-build.yml'
-      - 'fida-field/app/build.gradle'
-      - 'fida-field/app/src/main/java/com/fidalix/fidafield/TimeProductivityActivity.java'
   workflow_dispatch:
 
 permissions:
@@ -19,13 +17,50 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Verify 0.9.39 source
+      - name: Apply 0.9.40 sync queue repair
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          gradle=Path('fida-field/app/build.gradle')
+          s=gradle.read_text()
+          old="versionCode 42\n        versionName '0.9.39-test'"
+          new="versionCode 43\n        versionName '0.9.40-test'"
+          assert old in s
+          gradle.write_text(s.replace(old,new,1))
+
+          db=Path('fida-field/app/src/main/java/com/fidalix/fidafield/AppDatabase.java')
+          s=db.read_text()
+          anchor='    public long pendingBusinessChanges(){return count("sync_queue","entity_type IN (\'customer\',\'site\',\'customer_site\',\'asset\',\'technician\',\'job\',\'job_photo\',\'maintenance_log\',\'job_signature\')",null);}\n'
+          assert anchor in s
+          method='''    public int cleanupOrphanSyncState(){\n        SQLiteDatabase d=getWritableDatabase();int removed=0;\n        String[][] refs={{"customer","customers"},{"site","sites"},{"asset","assets"},{"technician","technicians"},{"job","jobs"},{"job_photo","job_photos"},{"maintenance_log","maintenance_logs"},{"job_signature","jobs"}};\n        for(String[] ref:refs)removed+=d.delete("sync_queue","entity_type=? AND entity_id NOT IN (SELECT id FROM "+ref[1]+")",new String[]{ref[0]});\n        removed+=d.delete("sync_queue","entity_type='customer_site' AND entity_id NOT IN (SELECT id FROM sites)",null);\n        d.execSQL("DELETE FROM sync_conflicts WHERE NOT EXISTS (SELECT 1 FROM sync_queue q WHERE q.entity_type=sync_conflicts.entity_type AND q.entity_id=sync_conflicts.entity_id)");\n        return removed;\n    }\n'''
+          s=s.replace(anchor,method+anchor,1)
+          db.write_text(s)
+
+          cloud=Path('fida-field/app/src/main/java/com/fidalix/fidafield/CloudSyncFoundation.java')
+          s=cloud.read_text()
+          old='            WorkspaceMembership verified=refreshWorkspaceAccess(workspaceId);if(verified==null)throw new Exception("Workspace access is disabled or has been removed. Ask the workspace Owner/Admin to re-enable your account, then check access again.");canManage=AccountTeamManager.ROLE_OWNER.equals(verified.role)||AccountTeamManager.ROLE_ADMIN.equals(verified.role);alignOperationalGeneration(workspaceId);\n            int pushed=0,pulled=0,deferred=0;'
+          new='            WorkspaceMembership verified=refreshWorkspaceAccess(workspaceId);if(verified==null)throw new Exception("Workspace access is disabled or has been removed. Ask the workspace Owner/Admin to re-enable your account, then check access again.");canManage=AccountTeamManager.ROLE_OWNER.equals(verified.role)||AccountTeamManager.ROLE_ADMIN.equals(verified.role);alignOperationalGeneration(workspaceId);\n            int repaired=db.cleanupOrphanSyncState();\n            int pushed=0,pulled=0,deferred=0;'
+          assert old in s
+          s=s.replace(old,new,1)
+          old='            syncAssignmentHistory(workspaceId);\n            refreshTeamCache(workspaceId,canManage);\n            int pushedTotal=pushed+media.recordsPushed,pulledTotal=pulled+media.recordsPulled;long conflicts=db.unresolvedConflictCount();\n            String status="Success · "+pushedTotal+" pushed, "+pulledTotal+" received · "+media.filesUploaded+" file upload"+(media.filesUploaded==1?"":"s")+", "+media.filesDownloaded+" download"+(media.filesDownloaded==1?"":"s")+(conflicts>0?" · "+conflicts+" protected conflict"+(conflicts==1?"":"s"):"");'
+          new='            syncAssignmentHistory(workspaceId);\n            refreshTeamCache(workspaceId,canManage);\n            repaired+=db.cleanupOrphanSyncState();\n            int pushedTotal=pushed+media.recordsPushed,pulledTotal=pulled+media.recordsPulled;long conflicts=db.unresolvedConflictCount();\n            String status="Success · "+pushedTotal+" pushed, "+pulledTotal+" received · "+media.filesUploaded+" file upload"+(media.filesUploaded==1?"":"s")+", "+media.filesDownloaded+" download"+(media.filesDownloaded==1?"":"s")+(conflicts>0?" · "+conflicts+" protected conflict"+(conflicts==1?"":"s"):"")+(repaired>0?" · "+repaired+" stale sync item"+(repaired==1?"":"s")+" repaired":"");'
+          assert old in s
+          s=s.replace(old,new,1)
+          old='            String message="Synced "+pushedTotal+" local record"+(pushedTotal==1?"":"s")+", received "+pulledTotal+" cloud record"+(pulledTotal==1?"":"s")+" and synchronized "+(media.filesUploaded+media.filesDownloaded)+" media file"+((media.filesUploaded+media.filesDownloaded)==1?"":"s")+(deferred>0?". "+deferred+" cloud change"+(deferred==1?" was":"s were")+" deferred to protect unsynced local work.":".");return new SyncResult(pushedTotal,pulledTotal,message);'
+          new='            String message="Synced "+pushedTotal+" local record"+(pushedTotal==1?"":"s")+", received "+pulledTotal+" cloud record"+(pulledTotal==1?"":"s")+" and synchronized "+(media.filesUploaded+media.filesDownloaded)+" media file"+((media.filesUploaded+media.filesDownloaded)==1?"":"s")+(deferred>0?". "+deferred+" cloud change"+(deferred==1?" was":"s were")+" deferred to protect unsynced local work.":".")+(repaired>0?" Repaired "+repaired+" stale sync item"+(repaired==1?".":"s."):"");return new SyncResult(pushedTotal,pulledTotal,message);'
+          assert old in s
+          cloud.write_text(s.replace(old,new,1))
+          print('Applied Fida Field 0.9.40 sync queue repair')
+          PY
+
+      - name: Verify 0.9.40 source
         run: |
           set -euo pipefail
-          grep -q 'versionCode 42' fida-field/app/build.gradle
-          grep -q "versionName '0.9.39-test'" fida-field/app/build.gradle
-          grep -q 'WindowInsetsCompat.Type.systemBars' fida-field/app/src/main/java/com/fidalix/fidafield/TimeProductivityActivity.java
-          grep -q 'barTop+safe.top' fida-field/app/src/main/java/com/fidalix/fidafield/TimeProductivityActivity.java
+          grep -q 'versionCode 43' fida-field/app/build.gradle
+          grep -q "versionName '0.9.40-test'" fida-field/app/build.gradle
+          grep -q 'cleanupOrphanSyncState' fida-field/app/src/main/java/com/fidalix/fidafield/AppDatabase.java
+          grep -q 'stale sync item' fida-field/app/src/main/java/com/fidalix/fidafield/CloudSyncFoundation.java
 
       - name: Reconstruct signing keystore
         run: |
@@ -57,8 +92,8 @@ jobs:
         run: |
           set -euo pipefail
           gradle :app:assembleDebug -PFIDA_OPEN_EDITION=true --stacktrace
-          cp app/build/outputs/apk/debug/app-debug.apk /tmp/Fida-Field-0.9.39-open-test.apk
-          sha256sum /tmp/Fida-Field-0.9.39-open-test.apk
+          cp app/build/outputs/apk/debug/app-debug.apk /tmp/Fida-Field-0.9.40-open-test.apk
+          sha256sum /tmp/Fida-Field-0.9.40-open-test.apk
 
       - name: Enable release signing
         run: |
@@ -79,9 +114,9 @@ jobs:
         run: |
           set -euo pipefail
           gradle :app:bundleRelease -PFIDA_OPEN_EDITION=false --stacktrace
-          cp app/build/outputs/bundle/release/app-release.aab /tmp/Fida-Field-0.9.39-play-release.aab
-          jarsigner -verify /tmp/Fida-Field-0.9.39-play-release.aab
-          sha256sum /tmp/Fida-Field-0.9.39-play-release.aab
+          cp app/build/outputs/bundle/release/app-release.aab /tmp/Fida-Field-0.9.40-play-release.aab
+          jarsigner -verify /tmp/Fida-Field-0.9.40-play-release.aab
+          sha256sum /tmp/Fida-Field-0.9.40-play-release.aab
 
       - name: Normalize source
         run: |
@@ -95,14 +130,14 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Fida-Field-0.9.39-open-test-apk
-          path: /tmp/Fida-Field-0.9.39-open-test.apk
+          name: Fida-Field-0.9.40-open-test-apk
+          path: /tmp/Fida-Field-0.9.40-open-test.apk
           retention-days: 14
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Fida-Field-0.9.39-play-release-aab
-          path: /tmp/Fida-Field-0.9.39-play-release.aab
+          name: Fida-Field-0.9.40-play-release-aab
+          path: /tmp/Fida-Field-0.9.40-play-release.aab
           retention-days: 14
 
       - name: Commit normalized source
@@ -112,7 +147,7 @@ jobs:
           git config user.email 'actions@users.noreply.github.com'
           git add fida-field
           if git diff --cached --quiet; then exit 0; fi
-          git commit -m 'Normalize Fida Field 0.9.39 source'
+          git commit -m 'Fida Field 0.9.40 sync queue repair'
           git fetch origin fida-field-dev
           git rebase origin/fida-field-dev
           git push origin HEAD:fida-field-dev

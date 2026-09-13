@@ -154,6 +154,14 @@ public class AppDatabase extends SQLiteOpenHelper {
     public String ensureRemoteUuid(String type,long entityId){Row r=one("SELECT remote_uuid FROM sync_metadata WHERE entity_type=? AND entity_id=?",new String[]{type,String.valueOf(entityId)});if(!r.s("remote_uuid").isEmpty())return r.s("remote_uuid");String uuid=java.util.UUID.randomUUID().toString();ContentValues v=new ContentValues();v.put("entity_type",type);v.put("entity_id",entityId);v.put("remote_uuid",uuid);getWritableDatabase().insertWithOnConflict("sync_metadata",null,v,SQLiteDatabase.CONFLICT_IGNORE);return one("SELECT remote_uuid FROM sync_metadata WHERE entity_type=? AND entity_id=?",new String[]{type,String.valueOf(entityId)}).s("remote_uuid");}
     public List<Row> pendingSyncRows(){return rows("SELECT q.*,m.remote_uuid,m.server_version,m.last_synced_at FROM sync_queue q LEFT JOIN sync_metadata m ON m.entity_type=q.entity_type AND m.entity_id=q.entity_id ORDER BY q.changed_at,q.id",null);}
 
+    public int cleanupOrphanSyncState(){
+        SQLiteDatabase d=getWritableDatabase();int removed=0;
+        String[][] refs={{"customer","customers"},{"site","sites"},{"asset","assets"},{"technician","technicians"},{"job","jobs"},{"job_photo","job_photos"},{"maintenance_log","maintenance_logs"},{"job_signature","jobs"}};
+        for(String[] ref:refs)removed+=d.delete("sync_queue","entity_type=? AND entity_id NOT IN (SELECT id FROM "+ref[1]+")",new String[]{ref[0]});
+        removed+=d.delete("sync_queue","entity_type='customer_site' AND entity_id NOT IN (SELECT id FROM sites)",null);
+        d.execSQL("DELETE FROM sync_conflicts WHERE NOT EXISTS (SELECT 1 FROM sync_queue q WHERE q.entity_type=sync_conflicts.entity_type AND q.entity_id=sync_conflicts.entity_id)");
+        return removed;
+    }
     public long pendingBusinessChanges(){return count("sync_queue","entity_type IN ('customer','site','customer_site','asset','technician','job','job_photo','maintenance_log','job_signature')",null);}
     public List<Row> pendingBusinessSyncRows(){return rows("SELECT q.*,m.remote_uuid,m.server_version,m.last_synced_at FROM sync_queue q LEFT JOIN sync_metadata m ON m.entity_type=q.entity_type AND m.entity_id=q.entity_id WHERE q.entity_type IN ('customer','site','asset','technician','job') ORDER BY q.changed_at,q.id",null);}
     public void discardManagerOnlyPendingChanges(){getWritableDatabase().delete("sync_queue","entity_type IN ('customer','site','customer_site','asset','technician')",null);getWritableDatabase().delete("sync_conflicts","entity_type IN ('customer','site','asset','technician')",null);}

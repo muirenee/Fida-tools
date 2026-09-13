@@ -57,6 +57,12 @@ public class CloudSyncFoundation {
     public SupabaseClientLite.AuthResult signUp(String name,String email,String password)throws Exception{return client.signUp(name,email,password);}
     public SupabaseClientLite.AuthResult signIn(String email,String password)throws Exception{return client.signIn(email,password);}
     public void requestPasswordReset(String email)throws Exception{client.requestPasswordReset(email);}
+    public JSONObject previewWorkspaceInvite(String token)throws Exception{
+        String code=token==null?"":token.trim();if(code.isEmpty())throw new Exception("Invitation code is required");
+        Object raw=client.invokePublicFunction("workspace-invite-link",new JSONObject().put("token",code).put("format","json"));
+        if(!(raw instanceof JSONObject))throw new Exception("Invitation could not be checked");JSONObject o=(JSONObject)raw;
+        if(!o.optBoolean("ok",false))throw new Exception(o.optString("message","Invitation is not available"));return o;
+    }
     public WorkspaceMembership registerInvitedUser(String token,String name,String password)throws Exception{
         Object raw=client.invokePublicFunction("register-invited-user",new JSONObject().put("token",token==null?"":token.trim()).put("name",name==null?"":name.trim()).put("password",password));
         if(!(raw instanceof JSONObject))throw new Exception("Invitation registration returned an unexpected response");

@@ -61,6 +61,26 @@ public class SupabaseClientLite {
         return new AuthResult(true,false,user==null?userId():user.optString("id",userId()),user==null?email.trim():user.optString("email",email.trim()));
     }
 
+    public void requestPasswordReset(String email)throws Exception{
+        String redirect="fidafield://password-reset";
+        JSONObject body=new JSONObject().put("email",email==null?"":email.trim());
+        request("POST",BuildConfig.SUPABASE_URL+"/auth/v1/recover?redirect_to="+enc(redirect),body,false,null,null);
+    }
+
+    public void adoptRecoverySession(String accessToken,String refreshToken,long expiresIn)throws Exception{
+        String access=accessToken==null?"":accessToken.trim();if(access.isEmpty())throw new Exception("Password reset link did not contain a recovery session");
+        String refresh=refreshToken==null?"":refreshToken.trim();long seconds=expiresIn>0?expiresIn:3600L;
+        prefs.edit().putString(KEY_ACCESS,access).putString(KEY_REFRESH,refresh).putLong(KEY_EXPIRES,System.currentTimeMillis()/1000L+Math.max(60L,seconds)).apply();
+    }
+
+    public AuthResult updatePassword(String password)throws Exception{
+        if(password==null||password.length()<8)throw new Exception("Use at least 8 characters");
+        Object raw=request("PUT",BuildConfig.SUPABASE_URL+"/auth/v1/user",new JSONObject().put("password",password),true,null,null);
+        JSONObject user=raw instanceof JSONObject?(JSONObject)raw:new JSONObject();String uid=user.optString("id",userId()),email=user.optString("email",accountEmail());
+        prefs.edit().putString(KEY_USER_ID,uid).putString(KEY_EMAIL,email).apply();
+        return new AuthResult(true,false,uid,email);
+    }
+
     public void signOut()throws Exception{
         String token=accessToken();
         if(!token.isEmpty())request("POST",BuildConfig.SUPABASE_URL+"/auth/v1/logout",new JSONObject(),true,null,null);

@@ -56,6 +56,7 @@ public class CloudSyncFoundation {
 
     public SupabaseClientLite.AuthResult signUp(String name,String email,String password)throws Exception{return client.signUp(name,email,password);}
     public SupabaseClientLite.AuthResult signIn(String email,String password)throws Exception{return client.signIn(email,password);}
+    public void requestPasswordReset(String email)throws Exception{client.requestPasswordReset(email);}
     public WorkspaceMembership registerInvitedUser(String token,String name,String password)throws Exception{
         Object raw=client.invokePublicFunction("register-invited-user",new JSONObject().put("token",token==null?"":token.trim()).put("name",name==null?"":name.trim()).put("password",password));
         if(!(raw instanceof JSONObject))throw new Exception("Invitation registration returned an unexpected response");

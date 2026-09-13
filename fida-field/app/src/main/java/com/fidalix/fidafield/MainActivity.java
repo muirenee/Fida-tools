@@ -270,7 +270,7 @@ public class MainActivity extends AppCompatActivity {
     private boolean canPerformFieldWork(){if(workspaceAccessRevoked())return false;if(accountTeam==null||!accountTeam.hasWorkspace())return true;String r=accountTeam.accountRole();return AccountTeamManager.ROLE_OWNER.equals(r)||AccountTeamManager.ROLE_ADMIN.equals(r)||AccountTeamManager.ROLE_TECHNICIAN.equals(r);}
     private boolean requireWorkspaceManager(String feature){if(canManageWorkspaceSettings())return true;new MaterialAlertDialogBuilder(this).setTitle("Owner or Admin only").setMessage(feature+" can only be changed by a workspace Owner or Admin. Your "+accountTeam.accountRole()+" account remains focused on assigned service work.").setPositiveButton("OK",null).show();return false;}
     private String currentJobUserUuid(){return accountTeam==null?"":accountTeam.cloudUserId();}
-    private long myTechnicianId(){AppDatabase.Row t=db.technicianForUser(currentJobUserUuid());return t.id();}
+    private long myTechnicianId(){AppDatabase.Row t=db.technicianForUser(currentJobUserUuid());return t.id()>0&&t.i("active")==1?t.id():0;}
     private boolean canSeeJob(AppDatabase.Row job){return job!=null&&job.id()>0&&db.jobVisibleToUser(job.id(),currentJobUserUuid(),canSeeAllJobs());}
 
 

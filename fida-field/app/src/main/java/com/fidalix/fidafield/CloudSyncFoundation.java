@@ -256,6 +256,16 @@ public class CloudSyncFoundation {
     }
 
     private void copy(JSONObject o,AppDatabase.Row r,String... keys)throws Exception{for(String k:keys)o.put(k,r.s(k));}
+    public JSONObject cloudConflictSnapshot(String workspaceId,String type,String remoteUuid)throws Exception{
+        if(!backendConfigured())throw new Exception("Supabase backend is not configured");if(!signedIn())throw new Exception("Please sign in first");String wid=workspaceId==null?"":workspaceId.trim(),rid=remoteUuid==null?"":remoteUuid.trim();if(wid.isEmpty()||rid.isEmpty())throw new Exception("Conflict is missing its cloud reference");
+        WorkspaceMembership membership=refreshWorkspaceAccess(wid);if(membership==null)throw new Exception("Workspace access is disabled or removed");JSONArray rows=client.select(tableFor(type),"select=*&workspace_id=eq."+wid+"&id=eq."+rid);if(rows.length()==0)return new JSONObject().put("_missing",true).put("id",rid);return rows.getJSONObject(0);
+    }
+
+    public String resolveConflictUseCloud(String workspaceId,String type,long localId,String remoteUuid)throws Exception{
+        JSONObject cloud=cloudConflictSnapshot(workspaceId,type,remoteUuid);if(cloud.optBoolean("_missing",false)){db.discardPendingEntitySync(type,localId);db.forceApplyRemoteDeletion(type,localId,remoteUuid);return "Cloud record no longer exists · local copy removed";}
+        db.discardPendingEntitySync(type,localId);if(isDeleted(cloud)){db.forceApplyRemoteDeletion(type,localId,remoteUuid);return "Cloud deletion applied";}long saved=db.upsertRemoteEntity(type,cloud);if(saved<=0)throw new Exception("Cloud version could not be applied because a related record is not available yet");db.resolveSyncConflict(type,localId);return "Cloud version applied";
+    }
+
     private void putDate(JSONObject o,String key,String value)throws Exception{if(value==null||value.trim().isEmpty())o.put(key,JSONObject.NULL);else o.put(key,value.trim());}
     private void putRemoteRef(JSONObject o,String key,String type,String local)throws Exception{long id=parseLong(local);if(id<=0)o.put(key,JSONObject.NULL);else o.put(key,db.ensureRemoteUuid(type,id));}
     private long parseLong(String value){try{return Long.parseLong(value==null?"0":value);}catch(Exception e){return 0;}}

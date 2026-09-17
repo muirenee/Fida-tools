@@ -399,6 +399,7 @@ public class MainActivity extends AppCompatActivity {
         if(canManageWorkspaceSettings())b.addView(menuCard("Custom branding · Pro",entitlements.isPro()?(branding.isActive()?"Active custom company identity":"Logo, colors and branded PDFs"):"Subscriber feature · upgrade to unlock",v->{if(entitlements.canUseCustomBranding())showBranding();else showUpgradeRequired("Custom branding");}));
         b.addView(menuCard("Account & workspace",accountTeam.hasWorkspace()?accountTeam.workspaceName()+" • "+accountTeam.accountRole():"Set up account and workspace",v->showAccountWorkspace()));
         b.addView(menuCard("Cloud & team sync",cloudSync.backendStatus()+" • "+cloudSync.pendingChanges()+" pending",v->showCloudSync()));
+        b.addView(menuCard("Release readiness QA","Role permissions, device identity & multi-device sync checks",v->showReleaseReadiness()));
         if(canManageWorkspaceSettings())b.addView(menuCard("Company settings","Company identity, report numbering and application preferences",v->showSettings()));
         else b.addView(paragraph(accountTeam.accountRole()+" access: work with assigned service jobs and operational data. Company settings, team administration, branding, backups and master-data changes are restricted to Owner/Admin."));
         b.addView(section("About"));b.addView(paragraph("Fida Field 0.9.33 Test\nShared customer sites, customer-filtered job sites and Owner-only operational cloud reset."));
@@ -416,7 +417,9 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void showMaintenanceAction(AppDatabase.Row asset){
-        if(canSeeAllJobs()){String[] actions={"Create service job","Mark serviced now","View asset history"};new MaterialAlertDialogBuilder(this).setTitle(asset.s("name")+" · "+asset.s("tag")).setMessage("Next service: "+asset.s("next_service")).setItems(actions,(d,which)->{if(which==0)showJobDialog(0,asset.id());else if(which==1)showQuickMaintenanceDialog(asset);else showAssetDetail(asset.id());}).setNegativeButton("Close",null).show();}else{String[] actions={"Create my service job","View asset history"};new MaterialAlertDialogBuilder(this).setTitle(asset.s("name")+" · "+asset.s("tag")).setMessage("Next service: "+asset.s("next_service")).setItems(actions,(d,which)->{if(which==0)showJobDialog(0,asset.id());else showAssetDetail(asset.id());}).setNegativeButton("Close",null).show();}
+        if(canSeeAllJobs()){String[] actions={"Create service job","Mark serviced now","View asset history"};new MaterialAlertDialogBuilder(this).setTitle(asset.s("name")+" · "+asset.s("tag")).setMessage("Next service: "+asset.s("next_service")).setItems(actions,(d,which)->{if(which==0)showJobDialog(0,asset.id());else if(which==1)showQuickMaintenanceDialog(asset);else showAssetDetail(asset.id());}).setNegativeButton("Close",null).show();}
+        else if(canPerformFieldWork()){String[] actions={"Create my service job","View asset history"};new MaterialAlertDialogBuilder(this).setTitle(asset.s("name")+" · "+asset.s("tag")).setMessage("Next service: "+asset.s("next_service")).setItems(actions,(d,which)->{if(which==0)showJobDialog(0,asset.id());else showAssetDetail(asset.id());}).setNegativeButton("Close",null).show();}
+        else{String[] actions={"View asset history"};new MaterialAlertDialogBuilder(this).setTitle(asset.s("name")+" · "+asset.s("tag")).setMessage("Read-only access · Next service: "+asset.s("next_service")).setItems(actions,(d,which)->showAssetDetail(asset.id())).setNegativeButton("Close",null).show();}
     }
 
     private void showQuickMaintenanceDialog(AppDatabase.Row asset){
@@ -663,6 +666,38 @@ public class MainActivity extends AppCompatActivity {
         d.setPositiveButton("Keep this device",(x,w)->new MaterialAlertDialogBuilder(this).setTitle("Keep this device's version?").setMessage("Fida Field will push this device's unsynced version to the workspace. Other pending changes on this device will also be synchronized.").setNegativeButton("Cancel",null).setPositiveButton("Keep & sync",(a,b)->runCloud("Synchronizing this device…",()->cloudSync.syncNow(accountTeam.workspaceId(),accountTeam.canManageTeam()),obj->{CloudSyncFoundation.SyncResult r=(CloudSyncFoundation.SyncResult)obj;toast(r.message);showCloudSync();})).show());
         d.setNeutralButton("Use cloud version",(x,w)->new MaterialAlertDialogBuilder(this).setTitle("Use the cloud version?").setMessage("This discards this device's unsynced changes for "+label+". If the cloud record was deleted, the local record and local dependent changes may also be removed. This cannot be undone from Sync Diagnostics.").setNegativeButton("Cancel",null).setPositiveButton("Use cloud",(a,b)->runCloud("Applying cloud version…",()->cloudSync.resolveConflictUseCloud(accountTeam.workspaceId(),type,id,remote),obj->{toast(String.valueOf(obj));showCloudSync();})).show());
         d.show();
+    }
+
+    private String qaResult(boolean ok){return ok?"PASS":"CHECK";}
+
+    private void showReleaseReadiness(){
+        setHeader("Release readiness QA","Role & multi-device checks");mainTabScreen=false;clear();LinearLayout b=body(page());MaterialButton back=outlineButton("← Back");back.setOnClickListener(v->showMore());b.addView(back);
+        String role=accountTeam==null?"":accountTeam.accountRole();boolean hasWorkspace=accountTeam!=null&&accountTeam.hasWorkspace();boolean cloudWorkspace=accountTeam!=null&&accountTeam.hasCloudWorkspace();boolean owner=AccountTeamManager.ROLE_OWNER.equals(role),admin=AccountTeamManager.ROLE_ADMIN.equals(role),technician=AccountTeamManager.ROLE_TECHNICIAN.equals(role),viewer=AccountTeamManager.ROLE_VIEWER.equals(role);boolean manager=owner||admin;
+        String device=cloudSync==null?"":cloudSync.deviceId();if(device.length()>12)device=device.substring(0,12)+"…";
+        b.addView(heroCard("Device QA snapshot","Use this screen on each test phone to confirm that account role, field permissions and workspace synchronization match the expected behavior before 1.0."));
+        b.addView(section("Identity"));b.addView(info("Device",device.isEmpty()?"Not initialized":device));b.addView(info("Account",cloudSync!=null&&!cloudSync.accountEmail().isEmpty()?cloudSync.accountEmail():"Local / not signed in"));b.addView(info("Workspace",hasWorkspace?accountTeam.workspaceName():"Local mode"));b.addView(info("Role",role.isEmpty()?"Local user":role));b.addView(info("Workspace access",workspaceAccessRevoked()?"Disabled":cloudSync.workspaceAccessState()));
+
+        boolean roleKnown=!hasWorkspace||owner||admin||technician||viewer;
+        boolean managerBoundary=!hasWorkspace||(canSeeAllJobs()==manager&&canManageWorkspaceSettings()==manager);
+        boolean fieldBoundary=!hasWorkspace||(canPerformFieldWork()==(owner||admin||technician));
+        boolean viewerBoundary=!viewer||(!canPerformFieldWork()&&!canManageWorkspaceSettings()&&!canSeeAllJobs());
+        boolean cloudIdentity=!cloudWorkspace||(cloudSync.signedIn()&&!accountTeam.cloudUserId().isEmpty());
+        boolean technicianLink=!technician||myTechnicianId()>0;
+        b.addView(section("Role boundaries"));
+        b.addView(rowCard("Known workspace role",roleKnown?"Owner / Admin / Technician / Viewer or local mode":"Unexpected role value",qaResult(roleKnown)));
+        b.addView(rowCard("Manager-only controls",managerBoundary?"Team, master data, backup and all-job visibility match the role":"Role and manager permissions disagree",qaResult(managerBoundary)));
+        b.addView(rowCard("Field-work controls",fieldBoundary?"Create/edit/start service matches the role":"Field-work permission does not match the role",qaResult(fieldBoundary)));
+        b.addView(rowCard("Viewer read-only",viewerBoundary?"No field work or workspace administration":"Viewer has a write-capable permission",qaResult(viewerBoundary)));
+        b.addView(rowCard("Technician profile link",technicianLink?"Field person link is ready":"Account is not linked to an active People & Team technician",qaResult(technicianLink)));
+
+        long pending=cloudSync.pendingChanges(),conflicts=cloudSync.conflictCount();boolean syncIdentity=cloudIdentity&&!workspaceAccessRevoked();
+        b.addView(section("Multi-device sync"));b.addView(rowCard("Cloud identity",cloudWorkspace?(cloudSync.signedIn()?"Signed in and workspace bound":"Workspace bound but account session is missing"):"Local-only device",qaResult(syncIdentity||!cloudWorkspace)));b.addView(info("Pending changes",String.valueOf(pending)));b.addView(info("Protected conflicts",String.valueOf(conflicts)));b.addView(info("Last sync",cloudSync.lastSync()));b.addView(info("Last result",cloudSync.lastResult()));
+        if(conflicts>0)b.addView(paragraph("Protected conflicts are expected during the conflict test. Resolve them from Cloud & Team Sync before calling the device clean."));else if(pending>0)b.addView(paragraph("This device still has local changes waiting to synchronize."));else if(cloudWorkspace)b.addView(paragraph("This device currently has a clean synchronization queue."));
+        if(cloudWorkspace&&cloudSync.signedIn()&&!workspaceAccessRevoked()){MaterialButton sync=button("Sync now & recheck");sync.setOnClickListener(v->runCloud("Running QA synchronization…",()->cloudSync.syncNow(accountTeam.workspaceId(),accountTeam.canManageTeam()),obj->{CloudSyncFoundation.SyncResult r=(CloudSyncFoundation.SyncResult)obj;toast(r.message);showReleaseReadiness();}));b.addView(sync);}
+        MaterialButton diagnostics=outlineButton("Open sync diagnostics");diagnostics.setOnClickListener(v->showCloudSync());b.addView(diagnostics);
+
+        b.addView(section("Two-device test"));b.addView(paragraph("1. Sync Device A and Device B until both show zero pending changes.\n2. On Device A, edit or start an assigned job while offline; confirm it shows a locally saved/pending state.\n3. On Device B, change the same job and synchronize it.\n4. Reconnect Device A and sync. Fida Field must protect the competing local edit instead of silently overwriting it.\n5. Open Sync Diagnostics, choose the intended version, sync again, then confirm both devices show the same job and zero unresolved conflicts."));
+        b.addView(section("Role test"));b.addView(paragraph("Owner/Admin: manage People & Team, master data, backup and all jobs.\nTechnician: assigned jobs and field work, but no team/master-data administration.\nViewer: read-only; no job creation, service timer, maintenance completion, backup, team or master-data changes."));
     }
 
     private void showCloudSync(){

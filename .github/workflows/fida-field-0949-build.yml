@@ -1,0 +1,135 @@
+name: Fida Field 0.9.49 Role Multi-device QA
+
+on:
+  push:
+    branches: [ fida-field-dev ]
+    paths:
+      - '.github/workflows/fida-field-0949-build.yml'
+      - '.github/scripts/fida_field_0949_role_multidevice_qa.py'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply 0.9.49 role and multi-device QA
+        run: python3 .github/scripts/fida_field_0949_role_multidevice_qa.py
+
+      - name: Verify 0.9.49 source and role guards
+        run: |
+          set -euo pipefail
+          MAIN=fida-field/app/src/main/java/com/fidalix/fidafield/MainActivity.java
+          DB=fida-field/app/src/main/java/com/fidalix/fidafield/AppDatabase.java
+          grep -q 'versionCode 52' fida-field/app/build.gradle
+          grep -q "versionName '0.9.49-test'" fida-field/app/build.gradle
+          grep -q 'Release readiness QA' "$MAIN"
+          grep -q 'showReleaseReadiness' "$MAIN"
+          grep -q 'Viewer read-only' "$MAIN"
+          grep -q 'Two-device test' "$MAIN"
+          grep -q 'if(!canPerformFieldWork())' "$MAIN"
+          grep -q 'requireWorkspaceManager("Backup & restore")' "$MAIN"
+          grep -q 'requireWorkspaceManager("Asset master data")' "$MAIN"
+          grep -q 'requireWorkspaceManager("Customer master data")' "$MAIN"
+          grep -q 'requireWorkspaceManager("Site master data")' "$MAIN"
+          grep -q 'jobsFilteredScoped' "$DB"
+          grep -q 'jobVisibleToUser' "$DB"
+          grep -q 'recordSyncConflict' "$DB"
+          grep -q 'Viewer accounts can review available service information but cannot create or modify jobs' "$MAIN"
+          grep -q 'Read-only access · Next service' "$MAIN"
+          ! grep -q 'Netsource' "$MAIN"
+
+      - name: Reconstruct signing keystore
+        run: |
+          set -euo pipefail
+          cat .fida-signing/fida-field-test.part* | tr -d '\n' | base64 -d > fida-field/app/fida-test.keystore
+          echo 'd407757a25505be46048d30b3b19b85a4abb9b0bf14475b2368e0f2e7e9bac51  fida-field/app/fida-test.keystore' | sha256sum -c -
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      - name: Install API 36
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | sort -V | tail -1); fi
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+          "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Build Open APK
+        working-directory: fida-field
+        env:
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          set -euo pipefail
+          gradle :app:assembleDebug -PFIDA_OPEN_EDITION=true --stacktrace
+          cp app/build/outputs/apk/debug/app-debug.apk /tmp/Fida-Field-0.9.49-open-test.apk
+          sha256sum /tmp/Fida-Field-0.9.49-open-test.apk
+
+      - name: Enable release signing
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('fida-field/app/build.gradle')
+          s=p.read_text()
+          old='        release {\n            minifyEnabled false\n'
+          new='        release {\n            signingConfig signingConfigs.test\n            minifyEnabled false\n'
+          assert old in s
+          p.write_text(s.replace(old,new,1))
+          PY
+
+      - name: Build Play AAB
+        working-directory: fida-field
+        env:
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          set -euo pipefail
+          gradle :app:bundleRelease -PFIDA_OPEN_EDITION=false --stacktrace
+          cp app/build/outputs/bundle/release/app-release.aab /tmp/Fida-Field-0.9.49-play-release.aab
+          jarsigner -verify /tmp/Fida-Field-0.9.49-play-release.aab
+          sha256sum /tmp/Fida-Field-0.9.49-play-release.aab
+
+      - name: Normalize source
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('fida-field/app/build.gradle')
+          s=p.read_text().replace('        release {\n            signingConfig signingConfigs.test\n            minifyEnabled false\n','        release {\n            minifyEnabled false\n',1)
+          p.write_text(s)
+          PY
+          rm -f fida-field/app/fida-test.keystore
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Fida-Field-0.9.49-open-test-apk
+          path: /tmp/Fida-Field-0.9.49-open-test.apk
+          retention-days: 14
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Fida-Field-0.9.49-play-release-aab
+          path: /tmp/Fida-Field-0.9.49-play-release.aab
+          retention-days: 14
+
+      - name: Commit normalized source
+        run: |
+          set -euo pipefail
+          git config user.name 'Fida Field CI'
+          git config user.email 'actions@users.noreply.github.com'
+          git add fida-field
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'Fida Field 0.9.49 role and multi-device QA'
+          git fetch origin fida-field-dev
+          git rebase origin/fida-field-dev
+          git push origin HEAD:fida-field-dev

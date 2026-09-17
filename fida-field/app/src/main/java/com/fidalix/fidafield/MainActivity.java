@@ -399,7 +399,7 @@ public class MainActivity extends AppCompatActivity {
         if(canManageWorkspaceSettings())b.addView(menuCard("Custom branding · Pro",entitlements.isPro()?(branding.isActive()?"Active custom company identity":"Logo, colors and branded PDFs"):"Subscriber feature · upgrade to unlock",v->{if(entitlements.canUseCustomBranding())showBranding();else showUpgradeRequired("Custom branding");}));
         b.addView(menuCard("Account & workspace",accountTeam.hasWorkspace()?accountTeam.workspaceName()+" • "+accountTeam.accountRole():"Set up account and workspace",v->showAccountWorkspace()));
         b.addView(menuCard("Cloud & team sync",cloudSync.backendStatus()+" • "+cloudSync.pendingChanges()+" pending",v->showCloudSync()));
-        b.addView(menuCard("Release readiness QA","Role permissions, device identity & multi-device sync checks",v->showReleaseReadiness()));
+        b.addView(menuCard("System diagnostics","Role permissions, device identity & multi-device sync health",v->showReleaseReadiness()));
         if(canManageWorkspaceSettings())b.addView(menuCard("Company settings","Company identity, report numbering and application preferences",v->showSettings()));
         else b.addView(paragraph(accountTeam.accountRole()+" access: work with assigned service jobs and operational data. Company settings, team administration, branding, backups and master-data changes are restricted to Owner/Admin."));
         b.addView(section("About"));b.addView(paragraph("Fida Field 0.9.33 Test\nShared customer sites, customer-filtered job sites and Owner-only operational cloud reset."));
@@ -671,10 +671,10 @@ public class MainActivity extends AppCompatActivity {
     private String qaResult(boolean ok){return ok?"PASS":"CHECK";}
 
     private void showReleaseReadiness(){
-        setHeader("Release readiness QA","Role & multi-device checks");mainTabScreen=false;clear();LinearLayout b=body(page());MaterialButton back=outlineButton("← Back");back.setOnClickListener(v->showMore());b.addView(back);
+        setHeader("System diagnostics","Role, device & multi-device sync health");mainTabScreen=false;clear();LinearLayout b=body(page());MaterialButton back=outlineButton("← Back");back.setOnClickListener(v->showMore());b.addView(back);
         String role=accountTeam==null?"":accountTeam.accountRole();boolean hasWorkspace=accountTeam!=null&&accountTeam.hasWorkspace();boolean cloudWorkspace=accountTeam!=null&&accountTeam.hasCloudWorkspace();boolean owner=AccountTeamManager.ROLE_OWNER.equals(role),admin=AccountTeamManager.ROLE_ADMIN.equals(role),technician=AccountTeamManager.ROLE_TECHNICIAN.equals(role),viewer=AccountTeamManager.ROLE_VIEWER.equals(role);boolean manager=owner||admin;
         String device=cloudSync==null?"":cloudSync.deviceId();if(device.length()>12)device=device.substring(0,12)+"…";
-        b.addView(heroCard("Device QA snapshot","Use this screen on each test phone to confirm that account role, field permissions and workspace synchronization match the expected behavior before 1.0."));
+        b.addView(heroCard("Device & workspace health","Confirm account role, field permissions, device identity and workspace synchronization on this device."));
         b.addView(section("Identity"));b.addView(info("Device",device.isEmpty()?"Not initialized":device));b.addView(info("Account",cloudSync!=null&&!cloudSync.accountEmail().isEmpty()?cloudSync.accountEmail():"Local / not signed in"));b.addView(info("Workspace",hasWorkspace?accountTeam.workspaceName():"Local mode"));b.addView(info("Role",role.isEmpty()?"Local user":role));b.addView(info("Workspace access",workspaceAccessRevoked()?"Disabled":cloudSync.workspaceAccessState()));
 
         boolean roleKnown=!hasWorkspace||owner||admin||technician||viewer;
@@ -696,8 +696,8 @@ public class MainActivity extends AppCompatActivity {
         if(cloudWorkspace&&cloudSync.signedIn()&&!workspaceAccessRevoked()){MaterialButton sync=button("Sync now & recheck");sync.setOnClickListener(v->runCloud("Running QA synchronization…",()->cloudSync.syncNow(accountTeam.workspaceId(),accountTeam.canManageTeam()),obj->{CloudSyncFoundation.SyncResult r=(CloudSyncFoundation.SyncResult)obj;toast(r.message);showReleaseReadiness();}));b.addView(sync);}
         MaterialButton diagnostics=outlineButton("Open sync diagnostics");diagnostics.setOnClickListener(v->showCloudSync());b.addView(diagnostics);
 
-        b.addView(section("Two-device test"));b.addView(paragraph("1. Sync Device A and Device B until both show zero pending changes.\n2. On Device A, edit or start an assigned job while offline; confirm it shows a locally saved/pending state.\n3. On Device B, change the same job and synchronize it.\n4. Reconnect Device A and sync. Fida Field must protect the competing local edit instead of silently overwriting it.\n5. Open Sync Diagnostics, choose the intended version, sync again, then confirm both devices show the same job and zero unresolved conflicts."));
-        b.addView(section("Role test"));b.addView(paragraph("Owner/Admin: manage People & Team, master data, backup and all jobs.\nTechnician: assigned jobs and field work, but no team/master-data administration.\nViewer: read-only; no job creation, service timer, maintenance completion, backup, team or master-data changes."));
+        b.addView(section("Two-device sync test"));b.addView(paragraph("1. Sync Device A and Device B until both show zero pending changes.\n2. On Device A, edit or start an assigned job while offline; confirm it shows a locally saved/pending state.\n3. On Device B, change the same job and synchronize it.\n4. Reconnect Device A and sync. Fida Field must protect the competing local edit instead of silently overwriting it.\n5. Open Sync Diagnostics, choose the intended version, sync again, then confirm both devices show the same job and zero unresolved conflicts."));
+        b.addView(section("Role reference"));b.addView(paragraph("Owner/Admin: manage People & Team, master data, backup and all jobs.\nTechnician: assigned jobs and field work, but no team/master-data administration.\nViewer: read-only; no job creation, service timer, maintenance completion, backup, team or master-data changes."));
     }
 
     private void showCloudSync(){

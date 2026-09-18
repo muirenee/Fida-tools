@@ -16,12 +16,15 @@ replace_once(
     "versionCode 54\n        versionName '1.0.1'"
 )
 
-replace_once(
-    MAIN,
-    '''        b.addView(section("About"));b.addView(paragraph("Fida Field 0.9.33 Test\\
-Shared customer sites, customer-filtered job sites and Owner-only operational cloud reset."));\n''',
-    '''        b.addView(section("About"));String edition=BuildConfig.OPEN_EDITION?"Open Edition":"Google Play Edition";b.addView(paragraph("Fida Field "+BuildConfig.VERSION_NAME+"\\n"+edition+"\\nField service & maintenance management by Fidalix."));\n'''
-)
+# Replace the complete legacy About block by anchoring on the next method instead
+# of depending on how the historical embedded newline was encoded.
+text=MAIN.read_text()
+start=text.find('        b.addView(section("About"));')
+anchor='\n    }\n\n    private void showReports()'
+end=text.find(anchor,start)
+if start < 0 or end < 0:
+    raise SystemExit('Could not locate legacy About block in MainActivity.java')
+replacement='        b.addView(section("About"));String edition=BuildConfig.OPEN_EDITION?"Open Edition":"Google Play Edition";b.addView(paragraph("Fida Field "+BuildConfig.VERSION_NAME+"\\n"+edition+"\\nField service & maintenance management by Fidalix."));'
+MAIN.write_text(text[:start]+replacement+text[end:])
 
-# Re-triggered after a GitHub Actions runner-start failure; no functional change.
 print('Fida Field 1.0.1 About/version hotfix applied')

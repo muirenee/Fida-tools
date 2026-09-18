@@ -14,7 +14,26 @@ OUT=Path('emulator-evidence'); OUT.mkdir(exist_ok=True)
 checks=[]
 
 def adb(*args, data=None, check=True):
-    return subprocess.run(['adb',*args],input=data,stdout=subprocess.PIPE,stderr=subprocess.PIPE,check=check,timeout=60).stdout
+    # Retry observations after a transient emulator transport disconnect. Never
+    # replay input, installation or data mutations: their completion is uncertain.
+    observation = (args[:2] in [('shell','dumpsys'), ('shell','getprop'),
+                               ('shell','uiautomator'), ('exec-out','cat'),
+                               ('exec-out','screencap')]
+                   or args[:1] == ('logcat',))
+    for attempt in range(3 if observation else 1):
+        result = subprocess.run(['adb',*args],input=data,stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE,timeout=60)
+        transport_error = result.returncode == 255 or any(
+            marker in result.stderr.lower()
+            for marker in [b'device offline', b'no devices', b'protocol fault', b'closed'])
+        if result.returncode and observation and transport_error and attempt < 2:
+            print('Retrying emulator observation after ADB disconnect:', args[:2], flush=True)
+            subprocess.run(['adb','wait-for-device'],check=True,timeout=30,
+                           stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+            time.sleep(1)
+            continue
+        if check: result.check_returncode()
+        return result.stdout
 
 def shell(*args):
     return adb('shell',*args).decode().strip()

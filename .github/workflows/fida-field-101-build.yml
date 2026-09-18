@@ -1,0 +1,175 @@
+name: Fida Field 1.0.1 About Version Hotfix
+
+on:
+  push:
+    branches: [ fida-field-dev ]
+    paths:
+      - '.github/workflows/fida-field-101-build.yml'
+      - '.github/scripts/fida_field_101_about_version_hotfix.py'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply 1.0.1 About/version hotfix
+        run: python3 .github/scripts/fida_field_101_about_version_hotfix.py
+
+      - name: Verify 1.0.1 source
+        run: |
+          set -euo pipefail
+          GRADLE=fida-field/app/build.gradle
+          MAIN=fida-field/app/src/main/java/com/fidalix/fidafield/MainActivity.java
+          grep -q 'versionCode 54' "$GRADLE"
+          grep -q "versionName '1.0.1'" "$GRADLE"
+          grep -q 'BuildConfig.VERSION_NAME' "$MAIN"
+          grep -q 'Open Edition' "$MAIN"
+          grep -q 'Google Play Edition' "$MAIN"
+          grep -q 'Field service & maintenance management by Fidalix' "$MAIN"
+          ! grep -q 'Fida Field 0.9.33 Test' "$MAIN"
+          ! grep -q "versionName '.*-test'" "$GRADLE"
+          ! grep -R -n 'Netsource' fida-field/app/src/main fida-field/app/build.gradle
+          ! grep -R -n 'localhost:3000' fida-field/app/src/main fida-field/app/build.gradle
+
+      - name: Reconstruct continuity signing keystore
+        run: |
+          set -euo pipefail
+          cat .fida-signing/fida-field-test.part* | tr -d '\n' | base64 -d > fida-field/app/fida-test.keystore
+          echo 'd407757a25505be46048d30b3b19b85a4abb9b0bf14475b2368e0f2e7e9bac51  fida-field/app/fida-test.keystore' | sha256sum -c -
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      - name: Install API 36
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | sort -V | tail -1); fi
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+          "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Validate production cloud configuration
+        env:
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$SUPABASE_PUBLISHABLE_KEY"
+          grep -q 'https://owxoyxylileuagsnjjht.supabase.co' fida-field/app/build.gradle
+
+      - name: Android lint and unit-test task
+        working-directory: fida-field
+        env:
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          set -euo pipefail
+          gradle :app:lintDebug -PFIDA_OPEN_EDITION=true --stacktrace
+          gradle :app:testDebugUnitTest -PFIDA_OPEN_EDITION=true --stacktrace
+
+      - name: Build Open Edition APK
+        working-directory: fida-field
+        env:
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          set -euo pipefail
+          gradle :app:assembleDebug -PFIDA_OPEN_EDITION=true --stacktrace
+          cp app/build/outputs/apk/debug/app-debug.apk /tmp/Fida-Field-1.0.1-open.apk
+          unzip -t /tmp/Fida-Field-1.0.1-open.apk >/dev/null
+          sha256sum /tmp/Fida-Field-1.0.1-open.apk
+
+      - name: Enable release signing with continuity key
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('fida-field/app/build.gradle')
+          s=p.read_text()
+          old='        release {\n            minifyEnabled false\n'
+          new='        release {\n            signingConfig signingConfigs.test\n            minifyEnabled false\n'
+          assert old in s
+          p.write_text(s.replace(old,new,1))
+          PY
+
+      - name: Build Google Play AAB
+        working-directory: fida-field
+        env:
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          set -euo pipefail
+          gradle :app:bundleRelease -PFIDA_OPEN_EDITION=false --stacktrace
+          cp app/build/outputs/bundle/release/app-release.aab /tmp/Fida-Field-1.0.1-play-release.aab
+          unzip -t /tmp/Fida-Field-1.0.1-play-release.aab >/dev/null
+          jarsigner -verify /tmp/Fida-Field-1.0.1-play-release.aab
+          sha256sum /tmp/Fida-Field-1.0.1-play-release.aab
+
+      - name: Write release validation report
+        run: |
+          set -euo pipefail
+          APK_SHA=$(sha256sum /tmp/Fida-Field-1.0.1-open.apk | awk '{print $1}')
+          AAB_SHA=$(sha256sum /tmp/Fida-Field-1.0.1-play-release.aab | awk '{print $1}')
+          cat > /tmp/Fida-Field-1.0.1-validation.txt <<EOF
+          Fida Field 1.0.1 production hotfix validation
+          Version code: 54
+          Version name: 1.0.1
+          About screen: dynamic BuildConfig.VERSION_NAME
+          Legacy 0.9.33 Test label: removed
+          Android lint: PASS
+          Unit-test task: PASS
+          Cloud configuration: PASS
+          APK archive integrity: PASS
+          AAB archive integrity: PASS
+          AAB jarsigner verification: PASS
+          Signing continuity keystore SHA-256: d407757a25505be46048d30b3b19b85a4abb9b0bf14475b2368e0f2e7e9bac51
+          APK SHA-256: $APK_SHA
+          AAB SHA-256: $AAB_SHA
+          EOF
+
+      - name: Normalize source
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('fida-field/app/build.gradle')
+          s=p.read_text().replace('        release {\n            signingConfig signingConfigs.test\n            minifyEnabled false\n','        release {\n            minifyEnabled false\n',1)
+          p.write_text(s)
+          PY
+          rm -f fida-field/app/fida-test.keystore
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Fida-Field-1.0.1-open-apk
+          path: /tmp/Fida-Field-1.0.1-open.apk
+          retention-days: 30
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Fida-Field-1.0.1-play-release-aab
+          path: /tmp/Fida-Field-1.0.1-play-release.aab
+          retention-days: 30
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Fida-Field-1.0.1-validation
+          path: /tmp/Fida-Field-1.0.1-validation.txt
+          retention-days: 30
+
+      - name: Commit normalized 1.0.1 source
+        run: |
+          set -euo pipefail
+          git config user.name 'Fida Field CI'
+          git config user.email 'actions@users.noreply.github.com'
+          git add fida-field
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'Fida Field 1.0.1 About and version hotfix'
+          git fetch origin fida-field-dev
+          git rebase origin/fida-field-dev
+          git push origin HEAD:fida-field-dev

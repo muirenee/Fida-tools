@@ -23,4 +23,5 @@ Shared customer sites, customer-filtered job sites and Owner-only operational cl
     '''        b.addView(section("About"));String edition=BuildConfig.OPEN_EDITION?"Open Edition":"Google Play Edition";b.addView(paragraph("Fida Field "+BuildConfig.VERSION_NAME+"\\n"+edition+"\\nField service & maintenance management by Fidalix."));\n'''
 )
 
+# Re-triggered after a GitHub Actions runner-start failure; no functional change.
 print('Fida Field 1.0.1 About/version hotfix applied')

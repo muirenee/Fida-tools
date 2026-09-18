@@ -12,8 +12,8 @@ android {
         applicationId 'com.fidalix.fidafield'
         minSdk 26
         targetSdk 36
-        versionCode 53
-        versionName '1.0.0'
+        versionCode 54
+        versionName '1.0.1'
         buildConfigField 'String', 'SUPABASE_URL', '"https://owxoyxylileuagsnjjht.supabase.co"'
         buildConfigField 'String', 'SUPABASE_PUBLISHABLE_KEY', '"' + (System.getenv('SUPABASE_PUBLISHABLE_KEY') ?: '') + '"'
         buildConfigField 'boolean', 'OPEN_EDITION', openEdition

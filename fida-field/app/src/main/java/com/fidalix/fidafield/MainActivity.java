@@ -402,7 +402,7 @@ public class MainActivity extends AppCompatActivity {
         b.addView(menuCard("System diagnostics","Role permissions, device identity & multi-device sync health",v->showReleaseReadiness()));
         if(canManageWorkspaceSettings())b.addView(menuCard("Company settings","Company identity, report numbering and application preferences",v->showSettings()));
         else b.addView(paragraph(accountTeam.accountRole()+" access: work with assigned service jobs and operational data. Company settings, team administration, branding, backups and master-data changes are restricted to Owner/Admin."));
-        b.addView(section("About"));b.addView(paragraph("Fida Field 0.9.33 Test\nShared customer sites, customer-filtered job sites and Owner-only operational cloud reset."));
+        b.addView(section("About"));String edition=BuildConfig.OPEN_EDITION?"Open Edition":"Google Play Edition";b.addView(paragraph("Fida Field "+BuildConfig.VERSION_NAME+"\n"+edition+"\nField service & maintenance management by Fidalix."));
     }
 
     private void showReports(){

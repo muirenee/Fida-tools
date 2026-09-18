@@ -98,6 +98,9 @@ public class MainActivity extends AppCompatActivity {
     private int currentMenu=MENU_DASH;
     private boolean mainTabScreen=true;
     private boolean firstRunFlow=false;
+    private String jobQuery="", jobStatus="All", jobPriority="All", jobDate="All dates", jobTechnician="All";
+    private String customerQuery="", assetQuery="";
+    private boolean jobFiltersExpanded=false;
 
     private long photoJobId=0;
     private Uri pendingPhotoUri;
@@ -134,9 +137,27 @@ public class MainActivity extends AppCompatActivity {
         registerLaunchers();
         scheduleMaintenanceReminders();
         CloudSyncWorker.configure(this,prefs.getBoolean(CloudSyncWorker.KEY_ENABLED,true));
+        if(savedInstanceState!=null){
+            jobQuery=savedInstanceState.getString("ux.jobQuery", "");
+            jobStatus=savedInstanceState.getString("ux.jobStatus", "All");
+            jobPriority=savedInstanceState.getString("ux.jobPriority", "All");
+            jobDate=savedInstanceState.getString("ux.jobDate", "All dates");
+            jobTechnician=savedInstanceState.getString("ux.jobTechnician", "All");
+            customerQuery=savedInstanceState.getString("ux.customerQuery", "");
+            assetQuery=savedInstanceState.getString("ux.assetQuery", "");
+            jobFiltersExpanded=savedInstanceState.getBoolean("ux.jobFiltersExpanded", false);
+        }
         buildChrome();
         installAppBackNavigation();
         if(captureWorkspaceInviteIntent(getIntent())||hasPendingWorkspaceInvite())showAccountWorkspace();else if(shouldShowFirstRunWelcome())showFirstRunWelcome();else showDashboard();
+    }
+
+    @Override protected void onSaveInstanceState(Bundle out){
+        out.putString("ux.jobQuery",jobQuery);out.putString("ux.jobStatus",jobStatus);
+        out.putString("ux.jobPriority",jobPriority);out.putString("ux.jobDate",jobDate);
+        out.putString("ux.jobTechnician",jobTechnician);out.putString("ux.customerQuery",customerQuery);
+        out.putString("ux.assetQuery",assetQuery);out.putBoolean("ux.jobFiltersExpanded",jobFiltersExpanded);
+        super.onSaveInstanceState(out);
     }
 
     @Override protected void onResume(){super.onResume();if(billingManager!=null)billingManager.refreshPurchases();}
@@ -325,11 +346,11 @@ public class MainActivity extends AppCompatActivity {
         String tech=prefs.getString("technician_name","");b.addView(heroCard(tech.isEmpty()?"Field service, organized.":"Hello, "+tech,"Jobs, service history and customer-ready reports — even offline."));
         long openJobs=db.visibleOpenJobCount(currentJobUserUuid(),canSeeAllJobs());
         if(canSeeAllJobs()){
-            long due30=db.dueAssets(30).size();LinearLayout stats=new LinearLayout(this);stats.setOrientation(LinearLayout.HORIZONTAL);stats.addView(dashboardStat("Open jobs",openJobs,v->showJobs()),new LinearLayout.LayoutParams(0,dp(102),1));stats.addView(spacerH());stats.addView(dashboardStat("Due ≤30d",due30,v->showMaintenance(30)),new LinearLayout.LayoutParams(0,dp(102),1));b.addView(stats);
+            long due30=db.dueAssets(30).size();LinearLayout stats=new LinearLayout(this);stats.setOrientation(LinearLayout.HORIZONTAL);stats.addView(dashboardStat("Active jobs",openJobs,v->showJobsWithStatus(JobStatusFilter.ACTIVE)),new LinearLayout.LayoutParams(0,ViewGroup.LayoutParams.WRAP_CONTENT,1));stats.addView(spacerH());stats.addView(dashboardStat("Due ≤30d",due30,v->showMaintenance(30)),new LinearLayout.LayoutParams(0,ViewGroup.LayoutParams.WRAP_CONTENT,1));b.addView(stats);
             MaterialCardView planCard=rowCard(entitlements.planName(),entitlements.usageSummary(),entitlements.isPro()?"PRO":entitlements.freeReportsRemaining()+" left");planCard.setOnClickListener(v->showPlan());b.addView(planCard);
-            long customerCount=db.count("customers",null,null),assetCount=db.count("assets",null,null);LinearLayout stats2=new LinearLayout(this);stats2.setOrientation(LinearLayout.HORIZONTAL);stats2.setPadding(0,dp(8),0,0);stats2.addView(dashboardStat("Customers",customerCount,v->showCustomers()),new LinearLayout.LayoutParams(0,dp(102),1));stats2.addView(spacerH());stats2.addView(dashboardStat("Assets",assetCount,v->showAssets()),new LinearLayout.LayoutParams(0,dp(102),1));b.addView(stats2);
+            long customerCount=db.count("customers",null,null),assetCount=db.count("assets",null,null);LinearLayout stats2=new LinearLayout(this);stats2.setOrientation(LinearLayout.HORIZONTAL);stats2.setPadding(0,dp(8),0,0);stats2.addView(dashboardStat("Customers",customerCount,v->showCustomers()),new LinearLayout.LayoutParams(0,ViewGroup.LayoutParams.WRAP_CONTENT,1));stats2.addView(spacerH());stats2.addView(dashboardStat("Assets",assetCount,v->showAssets()),new LinearLayout.LayoutParams(0,ViewGroup.LayoutParams.WRAP_CONTENT,1));b.addView(stats2);
         }else{
-            List<AppDatabase.Row> inProgress=db.jobsFilteredScoped("","In Progress","All","All","","",currentJobUserUuid(),false);LinearLayout stats=new LinearLayout(this);stats.setOrientation(LinearLayout.HORIZONTAL);stats.addView(dashboardStat("My open jobs",openJobs,v->showJobs()),new LinearLayout.LayoutParams(0,dp(102),1));stats.addView(spacerH());stats.addView(dashboardStat("In progress",inProgress.size(),v->showJobs()),new LinearLayout.LayoutParams(0,dp(102),1));b.addView(stats);renderFieldJobFocus(b);
+            List<AppDatabase.Row> inProgress=db.jobsFilteredScoped("","In Progress","All","All","","",currentJobUserUuid(),false);LinearLayout stats=new LinearLayout(this);stats.setOrientation(LinearLayout.HORIZONTAL);stats.addView(dashboardStat("My active jobs",openJobs,v->showJobsWithStatus(JobStatusFilter.ACTIVE)),new LinearLayout.LayoutParams(0,ViewGroup.LayoutParams.WRAP_CONTENT,1));stats.addView(spacerH());stats.addView(dashboardStat("In progress",inProgress.size(),v->showJobsWithStatus("In Progress")),new LinearLayout.LayoutParams(0,ViewGroup.LayoutParams.WRAP_CONTENT,1));b.addView(stats);renderFieldJobFocus(b);
         }
         if(accountTeam.hasCloudWorkspace()&&cloudSync.signedIn()){long pending=cloudSync.pendingChanges(),conflicts=cloudSync.conflictCount();String badge=conflicts>0?conflicts+" conflict"+(conflicts==1?"":"s"):pending>0?pending+" pending":"Up to date";String syncMeta="Last sync: "+cloudSync.lastSync()+(pending>0?" · "+pending+" pending":"");MaterialCardView syncCard=rowCard("Cloud sync",syncMeta,badge);syncCard.setOnClickListener(v->showCloudSync());b.addView(syncCard);}
         b.addView(section("Quick actions"));LinearLayout actions=new LinearLayout(this);actions.setOrientation(LinearLayout.HORIZONTAL);if(canPerformFieldWork()){MaterialButton newJob=button("+ New job");newJob.setOnClickListener(v->showJobDialog(0,0));actions.addView(newJob,new LinearLayout.LayoutParams(0,dp(52),1));}if(canManageWorkspaceSettings()){if(actions.getChildCount()>0)actions.addView(spacerH());MaterialButton newClient=outlineButton("+ Customer");newClient.setOnClickListener(v->showCustomerDialog(0));actions.addView(newClient,new LinearLayout.LayoutParams(0,dp(52),1));}if(actions.getChildCount()>0)b.addView(actions);else b.addView(paragraph("Viewer access is read-only."));
@@ -337,28 +358,63 @@ public class MainActivity extends AppCompatActivity {
         List<AppDatabase.Row> recent=db.recentJobsScoped(4,currentJobUserUuid(),canSeeAllJobs());b.addView(section("Recent jobs"));if(recent.isEmpty())b.addView(empty("Create your first service job to start a history."));else for(AppDatabase.Row r:recent){MaterialCardView c=rowCard(r.s("report_no")+" · "+r.s("title"),r.s("customer_name")+" • "+r.s("job_date"),r.s("status"));c.setOnClickListener(v->showJobDetail(r.id()));b.addView(c);}
     }
 
+    private void showJobsWithStatus(String status){
+        jobQuery="";jobStatus=status;jobPriority="All";jobDate="All dates";jobTechnician="All";
+        jobFiltersExpanded=false;showJobs();
+    }
+
     private void showJobs(){
-        currentMenu=MENU_JOBS;bottom.getMenu().findItem(MENU_JOBS).setChecked(true);setHeader("Jobs","Search, filter & service history");mainTabScreen=true;clear();LinearLayout b=body(page());
-        if(canPerformFieldWork()&&!canSeeAllJobs())renderFieldJobFocus(b);
-        if(canPerformFieldWork()){MaterialButton add=button("+ New service job");add.setOnClickListener(v->showJobDialog(0,0));b.addView(add,new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,dp(52)));}else b.addView(paragraph("Viewer access is read-only. You can review jobs available to your account."));
-        EditText search=input("Search report, customer, site, asset, technician…","");b.addView(search);
-        b.addView(label("Status"));Spinner status=spinner(new String[]{"All","Open","In Progress","Completed","Cancelled"});b.addView(status);
-        LinearLayout filters=new LinearLayout(this);filters.setOrientation(LinearLayout.HORIZONTAL);Spinner priority=spinner(new String[]{"All","Low","Normal","High","Urgent"});Spinner date=spinner(new String[]{"All dates","Today","Last 7 days","Last 30 days","This year"});filters.addView(priority,new LinearLayout.LayoutParams(0,dp(52),1));filters.addView(spacerH());filters.addView(date,new LinearLayout.LayoutParams(0,dp(52),1));b.addView(label("Priority / date"));b.addView(filters);
-        b.addView(label("Technician"));Spinner technician=spinner(canSeeAllJobs()?technicianFilterValues():new String[]{"My assigned jobs"});b.addView(technician);MaterialButton clearFilters=outlineButton("Clear filters");b.addView(clearFilters);
+        currentMenu=MENU_JOBS;bottom.getMenu().findItem(MENU_JOBS).setChecked(true);
+        setHeader("Jobs","Search, filter & service history");mainTabScreen=true;clear();LinearLayout b=body(page());
+        if(canPerformFieldWork()){MaterialButton add=button("+ New service job");add.setOnClickListener(v->showJobDialog(0,0));b.addView(add);}
+        else b.addView(paragraph("Viewer access is read-only. You can review jobs available to your account."));
+        EditText search=searchInput(b,"Search jobs",jobQuery);
+        b.addView(label("Status"));Spinner status=spinner(new String[]{"All",JobStatusFilter.ACTIVE,"Open","In Progress","Completed","Cancelled"});
+        status.setContentDescription("Job status");setSpinner(status,jobStatus);b.addView(status);
+        MaterialButton toggle=outlineButton("More filters");b.addView(toggle);
+        LinearLayout filters=new LinearLayout(this);filters.setOrientation(LinearLayout.VERTICAL);
+        filters.setVisibility(jobFiltersExpanded?View.VISIBLE:View.GONE);b.addView(filters);
+        filters.addView(label("Priority"));Spinner priority=spinner(new String[]{"All","Low","Normal","High","Urgent"});
+        priority.setContentDescription("Job priority");setSpinner(priority,jobPriority);filters.addView(priority);
+        filters.addView(label("Date"));Spinner date=spinner(new String[]{"All dates","Today","Last 7 days","Last 30 days","This year"});
+        date.setContentDescription("Job date range");setSpinner(date,jobDate);filters.addView(date);
+        Spinner technician=spinner(canSeeAllJobs()?technicianFilterValues():new String[]{"My assigned jobs"});
+        technician.setContentDescription("Assigned technician");setSpinner(technician,jobTechnician);
+        if(canSeeAllJobs()){filters.addView(label("Technician"));filters.addView(technician);}
+        MaterialButton reset=outlineButton("Clear search & filters");b.addView(reset);
         LinearLayout list=new LinearLayout(this);list.setOrientation(LinearLayout.VERTICAL);b.addView(list);
-        Runnable reload=()->{String[] range=dateRange(String.valueOf(date.getSelectedItem()));renderJobs(list,search.getText().toString(),String.valueOf(status.getSelectedItem()),String.valueOf(priority.getSelectedItem()),String.valueOf(technician.getSelectedItem()),range[0],range[1]);};
-        search.addTextChangedListener(watcher(reload));AdapterView.OnItemSelectedListener l=new AdapterView.OnItemSelectedListener(){public void onItemSelected(AdapterView<?>p,View v,int pos,long id){reload.run();}public void onNothingSelected(AdapterView<?>p){}};status.setOnItemSelectedListener(l);priority.setOnItemSelectedListener(l);date.setOnItemSelectedListener(l);technician.setOnItemSelectedListener(l);clearFilters.setOnClickListener(v->{search.setText("");status.setSelection(0);priority.setSelection(0);date.setSelection(0);if(canSeeAllJobs())technician.setSelection(0);reload.run();});reload.run();
+        Runnable reload=()->{
+            jobQuery=search.getText().toString();jobStatus=String.valueOf(status.getSelectedItem());
+            jobPriority=String.valueOf(priority.getSelectedItem());jobDate=String.valueOf(date.getSelectedItem());
+            jobTechnician=canSeeAllJobs()?String.valueOf(technician.getSelectedItem()):"All";
+            int additional=("All".equals(jobPriority)?0:1)+("All dates".equals(jobDate)?0:1)+("All".equals(jobTechnician)?0:1);
+            toggle.setText((jobFiltersExpanded?"Hide filters":"More filters")+(additional>0?" ("+additional+")":""));
+            toggle.setContentDescription(toggle.getText()+ (jobFiltersExpanded?", expanded":", collapsed"));
+            reset.setVisibility(!jobQuery.isEmpty()||!"All".equals(jobStatus)||additional>0?View.VISIBLE:View.GONE);
+            String[] range=dateRange(jobDate);
+            renderJobs(list,jobQuery,jobStatus,jobPriority,jobTechnician,range[0],range[1]);
+        };
+        toggle.setOnClickListener(v->{jobFiltersExpanded=!jobFiltersExpanded;filters.setVisibility(jobFiltersExpanded?View.VISIBLE:View.GONE);reload.run();});
+        search.addTextChangedListener(watcher(reload));
+        AdapterView.OnItemSelectedListener listener=new AdapterView.OnItemSelectedListener(){
+            public void onItemSelected(AdapterView<?> parent,View view,int position,long id){reload.run();}
+            public void onNothingSelected(AdapterView<?> parent){}
+        };
+        status.setOnItemSelectedListener(listener);priority.setOnItemSelectedListener(listener);
+        date.setOnItemSelectedListener(listener);technician.setOnItemSelectedListener(listener);
+        reset.setOnClickListener(v->{search.setText("");status.setSelection(0);priority.setSelection(0);date.setSelection(0);technician.setSelection(0);reload.run();});
+        reload.run();
     }
     private void renderJobs(LinearLayout list,String q,String status,String priority,String technician,String from,String to){
-        list.removeAllViews();String techFilter=canSeeAllJobs()?technician:"All";List<AppDatabase.Row> rows=db.jobsFilteredScoped(q,status,priority,techFilter,from,to,currentJobUserUuid(),canSeeAllJobs());if(rows.isEmpty()){list.addView(empty("No matching jobs."));return;}TextView count=paragraph(rows.size()+" job(s) found");list.addView(count);
+        list.removeAllViews();String techFilter=canSeeAllJobs()?technician:"All";List<AppDatabase.Row> rows=db.jobsFilteredScoped(q,status,priority,techFilter,from,to,currentJobUserUuid(),canSeeAllJobs());if(rows.isEmpty()){list.addView(empty("No jobs match this view. Try another search or clear the filters."));return;}TextView count=paragraph(rows.size()+(rows.size()==1?" job":" jobs"));list.addView(count);
         for(AppDatabase.Row r:rows){String who=r.s("customer_name").isEmpty()?"No customer":r.s("customer_name");String meta=who+(r.s("site_name").isEmpty()?"":" • "+r.s("site_name"))+" • "+r.s("job_date")+(r.s("technician").isEmpty()?"":" • "+r.s("technician"));String badge=r.s("status")+("Normal".equals(r.s("priority"))||r.s("priority").isEmpty()?"":" · "+r.s("priority"));MaterialCardView c=rowCard(r.s("report_no")+" · "+r.s("title"),meta,badge);c.setOnClickListener(v->showJobDetail(r.id()));list.addView(c);if(canPerformFieldWork()&&!canSeeAllJobs()&&("Open".equals(r.s("status"))||"In Progress".equals(r.s("status")))){boolean running=db.jobServiceRunning(r.id());MaterialButton field=outlineButton("Open".equals(r.s("status"))?"Start service":running?"Continue job":"Resume service");field.setOnClickListener(v->startJobAndOpen(r.id()));list.addView(field);}}
     }
 
     private void showCustomers(){
         currentMenu=MENU_CUSTOMERS;bottom.getMenu().findItem(MENU_CUSTOMERS).setChecked(true);setHeader("Customers","Customers, sites & service history");mainTabScreen=true;clear();LinearLayout b=body(page());
         if(canManageWorkspaceSettings()){LinearLayout a=new LinearLayout(this);a.setOrientation(LinearLayout.HORIZONTAL);MaterialButton cbtn=button("+ Customer");cbtn.setOnClickListener(v->showCustomerDialog(0));a.addView(cbtn,new LinearLayout.LayoutParams(0,dp(52),1));a.addView(spacerH());MaterialButton sbtn=outlineButton("+ Site");sbtn.setOnClickListener(v->showSiteDialog(0,0));a.addView(sbtn,new LinearLayout.LayoutParams(0,dp(52),1));b.addView(a);}else b.addView(paragraph("Customer and site master data is read-only for "+accountTeam.accountRole()+" accounts."));
-        EditText search=input("Search customer, site, contact…","");b.addView(search);LinearLayout list=new LinearLayout(this);list.setOrientation(LinearLayout.VERTICAL);b.addView(list);
-        Runnable reload=()->{list.removeAllViews();String q=search.getText().toString().trim().toLowerCase(Locale.US);list.addView(section("Customers"));int customerCount=0;for(AppDatabase.Row r:db.customers()){String hay=(r.s("name")+" "+r.s("contact")+" "+r.s("phone")+" "+r.s("email")).toLowerCase(Locale.US);if(!q.isEmpty()&&!hay.contains(q))continue;customerCount++;long sites=db.siteCountForCustomer(r.id());long jobs=db.jobsForCustomerScoped(r.id(),currentJobUserUuid(),canSeeAllJobs()).size();MaterialCardView card=rowCard(r.s("name"),(r.s("contact").isEmpty()?"No contact":r.s("contact"))+" • "+sites+" site(s) • "+jobs+" job(s)",r.s("phone"));card.setOnClickListener(v->showCustomerDetail(r.id()));list.addView(card);}if(customerCount==0)list.addView(empty("No matching customers."));list.addView(section("Sites"));int siteCount=0;for(AppDatabase.Row r:db.sites(0)){String hay=(r.s("name")+" "+r.s("customer_name")+" "+r.s("address")+" "+r.s("contact")+" "+r.s("phone")).toLowerCase(Locale.US);if(!q.isEmpty()&&!hay.contains(q))continue;siteCount++;MaterialCardView card=rowCard(r.s("name"),r.s("customer_name"),r.s("address"));card.setOnClickListener(v->showSiteDetail(r.id()));list.addView(card);}if(siteCount==0)list.addView(empty("No matching sites."));};search.addTextChangedListener(watcher(reload));reload.run();
+        EditText search=searchInput(b,"Search customers & sites",customerQuery);LinearLayout list=new LinearLayout(this);list.setOrientation(LinearLayout.VERTICAL);b.addView(list);
+        Runnable reload=()->{list.removeAllViews();customerQuery=search.getText().toString();String q=search.getText().toString().trim().toLowerCase(Locale.US);list.addView(section("Customers"));int customerCount=0;for(AppDatabase.Row r:db.customers()){String hay=(r.s("name")+" "+r.s("contact")+" "+r.s("phone")+" "+r.s("email")).toLowerCase(Locale.US);if(!q.isEmpty()&&!hay.contains(q))continue;customerCount++;long sites=db.siteCountForCustomer(r.id());long jobs=db.jobsForCustomerScoped(r.id(),currentJobUserUuid(),canSeeAllJobs()).size();MaterialCardView card=rowCard(r.s("name"),(r.s("contact").isEmpty()?"No contact":r.s("contact"))+" • "+sites+" site(s) • "+jobs+" job(s)",r.s("phone"));card.setOnClickListener(v->showCustomerDetail(r.id()));list.addView(card);}if(customerCount==0)list.addView(empty("No matching customers."));list.addView(section("Sites"));int siteCount=0;for(AppDatabase.Row r:db.sites(0)){String hay=(r.s("name")+" "+r.s("customer_name")+" "+r.s("address")+" "+r.s("contact")+" "+r.s("phone")).toLowerCase(Locale.US);if(!q.isEmpty()&&!hay.contains(q))continue;siteCount++;MaterialCardView card=rowCard(r.s("name"),r.s("customer_name"),r.s("address"));card.setOnClickListener(v->showSiteDetail(r.id()));list.addView(card);}if(siteCount==0)list.addView(empty("No matching sites."));};search.addTextChangedListener(watcher(reload));reload.run();
     }
 
     private void showCustomerDetail(long id){
@@ -382,7 +438,7 @@ public class MainActivity extends AppCompatActivity {
     private void showAssets(){
         currentMenu=MENU_ASSETS;bottom.getMenu().findItem(MENU_ASSETS).setChecked(true);setHeader("Assets","Equipment & maintenance");mainTabScreen=true;clear();LinearLayout b=body(page());
         LinearLayout actions=new LinearLayout(this);actions.setOrientation(LinearLayout.HORIZONTAL);if(canManageWorkspaceSettings()){MaterialButton add=button("+ Add asset");add.setOnClickListener(v->showAssetDialog(0));actions.addView(add,new LinearLayout.LayoutParams(0,dp(52),1));actions.addView(spacerH());}MaterialButton scan=outlineButton("Scan QR");scan.setOnClickListener(v->scanAssetQr());actions.addView(scan,new LinearLayout.LayoutParams(0,dp(52),1));b.addView(actions);
-        EditText search=input("Search asset, tag, serial…","");b.addView(search);LinearLayout list=new LinearLayout(this);list.setOrientation(LinearLayout.VERTICAL);b.addView(list);Runnable reload=()->{list.removeAllViews();String q=search.getText().toString().trim().toLowerCase(Locale.US);for(AppDatabase.Row r:db.assets(0,0)){String hay=(r.s("name")+" "+r.s("tag")+" "+r.s("serial")+" "+r.s("customer_name")).toLowerCase(Locale.US);if(!q.isEmpty()&&!hay.contains(q))continue;String meta=r.s("customer_name")+(r.s("site_name").isEmpty()?"":" • "+r.s("site_name"));String badge=r.s("next_service").isEmpty()?r.s("tag"):"Due "+r.s("next_service");MaterialCardView card=rowCard(r.s("name"),meta,badge);card.setOnClickListener(v->showAssetDetail(r.id()));list.addView(card);}if(list.getChildCount()==0)list.addView(empty("No matching assets."));};search.addTextChangedListener(watcher(reload));reload.run();
+        EditText search=searchInput(b,"Search assets, tags & serials",assetQuery);LinearLayout list=new LinearLayout(this);list.setOrientation(LinearLayout.VERTICAL);b.addView(list);Runnable reload=()->{list.removeAllViews();assetQuery=search.getText().toString();String q=search.getText().toString().trim().toLowerCase(Locale.US);for(AppDatabase.Row r:db.assets(0,0)){String hay=(r.s("name")+" "+r.s("tag")+" "+r.s("serial")+" "+r.s("customer_name")).toLowerCase(Locale.US);if(!q.isEmpty()&&!hay.contains(q))continue;String meta=r.s("customer_name")+(r.s("site_name").isEmpty()?"":" • "+r.s("site_name"));String badge=r.s("next_service").isEmpty()?r.s("tag"):"Due "+r.s("next_service");MaterialCardView card=rowCard(r.s("name"),meta,badge);card.setOnClickListener(v->showAssetDetail(r.id()));list.addView(card);}if(list.getChildCount()==0)list.addView(empty("No matching assets."));};search.addTextChangedListener(watcher(reload));reload.run();
     }
 
     private void showMore(){
@@ -1110,7 +1166,28 @@ public class MainActivity extends AppCompatActivity {
 
     private LinearLayout form(){LinearLayout f=new LinearLayout(this);f.setOrientation(LinearLayout.VERTICAL);f.setPadding(dp(4),dp(4),dp(4),dp(10));return f;}
     private ScrollView scrollForm(View f){ScrollView s=new ScrollView(this);s.setFillViewport(true);s.setPadding(dp(4),0,dp(4),0);s.addView(f);return s;}
-    private EditText input(String hint,String value){EditText e=new EditText(this);e.setHint(hint);e.setText(value==null?"":value);e.setTextSize(15);e.setTextColor(textColor());e.setHintTextColor(mutedColor());e.setSingleLine(true);e.setPadding(dp(16),dp(11),dp(16),dp(11));e.setBackground(rounded(surface(),borderColor(),dp(1),dp(16)));e.setSelectAllOnFocus(false);e.setOnFocusChangeListener((v,focused)->e.setBackground(rounded(surface(),focused?ACCENT:borderColor(),focused?dp(2):dp(1),dp(16))));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,dp(58));p.setMargins(0,dp(6),0,dp(6));e.setLayoutParams(p);return e;}
+    private EditText input(String hint,String value){EditText e=new EditText(this);e.setHint(hint);e.setContentDescription(hint);e.setMinHeight(dp(58));e.setText(value==null?"":value);e.setTextSize(15);e.setTextColor(textColor());e.setHintTextColor(mutedColor());e.setSingleLine(true);e.setPadding(dp(16),dp(11),dp(16),dp(11));e.setBackground(rounded(surface(),borderColor(),dp(1),dp(16)));e.setSelectAllOnFocus(false);e.setOnFocusChangeListener((v,focused)->e.setBackground(rounded(surface(),focused?ACCENT:borderColor(),focused?dp(2):dp(1),dp(16))));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT);p.setMargins(0,dp(6),0,dp(6));e.setLayoutParams(p);return e;}
+    private EditText searchInput(LinearLayout parent,String hint,String value){
+        LinearLayout row=new LinearLayout(this);row.setGravity(Gravity.CENTER_VERTICAL);
+        EditText search=input(hint,value);
+        search.setInputType(android.text.InputType.TYPE_CLASS_TEXT);
+        search.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH);
+        row.addView(search,new LinearLayout.LayoutParams(0,ViewGroup.LayoutParams.WRAP_CONTENT,1));
+        MaterialButton clear=outlineButton("×");clear.setTextSize(22);clear.setMinWidth(0);clear.setMinimumWidth(0);
+        clear.setPadding(0,0,0,0);clear.setContentDescription("Clear "+hint.toLowerCase(Locale.US));
+        LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(dp(48),dp(48));cp.setMargins(dp(8),0,0,0);row.addView(clear,cp);
+        clear.setVisibility(value.isEmpty()?View.GONE:View.VISIBLE);
+        clear.setOnClickListener(v->{search.setText("");search.requestFocus();});
+        search.addTextChangedListener(watcher(()->clear.setVisibility(search.length()==0?View.GONE:View.VISIBLE)));
+        search.setOnEditorActionListener((view,action,event)->{
+            if(action!=android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH)return false;
+            android.view.inputmethod.InputMethodManager keyboard=(android.view.inputmethod.InputMethodManager)getSystemService(INPUT_METHOD_SERVICE);
+            if(keyboard!=null)keyboard.hideSoftInputFromWindow(search.getWindowToken(),0);
+            search.clearFocus();return true;
+        });
+        LinearLayout.LayoutParams rp=new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT);rp.setMargins(0,dp(6),0,dp(6));parent.addView(row,rp);
+        return search;
+    }
     private EditText multi(String hint,String value){EditText e=input(hint,value);e.setSingleLine(false);e.setGravity(Gravity.TOP);e.setMinLines(3);e.setMaxLines(6);e.getLayoutParams().height=dp(104);return e;}
     private String val(EditText e){return e.getText()==null?"":e.getText().toString().trim();}
     private Spinner spinner(String[] values){Spinner s=new Spinner(this);ArrayAdapter<String>a=new ArrayAdapter<>(this,android.R.layout.simple_spinner_item,values);a.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);s.setAdapter(a);styleSpinner(s);LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,dp(54));p.setMargins(0,dp(4),0,dp(7));s.setLayoutParams(p);return s;}
@@ -1142,9 +1219,9 @@ public class MainActivity extends AppCompatActivity {
         }
         return c;
     }
-    private MaterialCardView stat(String label,long value){MaterialCardView c=new MaterialCardView(this);c.setCardBackgroundColor(surface());c.setRadius(dp(22));c.setCardElevation(dp(1));c.setStrokeColor(borderColor());c.setStrokeWidth(dp(1));LinearLayout l=new LinearLayout(this);l.setOrientation(LinearLayout.VERTICAL);l.setGravity(Gravity.CENTER_VERTICAL);l.setPadding(dp(16),dp(14),dp(16),dp(13));LinearLayout top=new LinearLayout(this);top.setGravity(Gravity.CENTER_VERTICAL);View dot=new View(this);dot.setBackground(rounded(ACCENT,0,0,dp(6)));top.addView(dot,new LinearLayout.LayoutParams(dp(9),dp(9)));TextView lab=new TextView(this);lab.setText(label);lab.setTextSize(11);lab.setTextColor(mutedColor());lab.setPadding(dp(7),0,0,0);top.addView(lab);TextView n=new TextView(this);n.setText(String.valueOf(value));n.setTextSize(29);n.setTextColor(textColor());n.setTypeface(android.graphics.Typeface.create("sans-serif",android.graphics.Typeface.BOLD));n.setPadding(0,dp(6),0,0);l.addView(top);l.addView(n);c.addView(l);return c;}
-    private MaterialCardView rowCard(String a,String b,String badge){MaterialCardView c=new MaterialCardView(this);c.setCardBackgroundColor(surface());c.setRadius(dp(20));c.setStrokeColor(borderColor());c.setStrokeWidth(dp(1));c.setCardElevation(dp(1));c.setClickable(true);c.setFocusable(true);c.setRippleColor(ColorStateList.valueOf(isNight()?0x22F99D1C:0x12F99D1C));LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT);cp.setMargins(0,dp(6),0,dp(6));c.setLayoutParams(cp);LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.HORIZONTAL);row.setGravity(Gravity.CENTER_VERTICAL);row.setPadding(dp(16),dp(14),dp(14),dp(14));View rail=new View(this);rail.setBackground(rounded(paleAccentBorder(),0,0,dp(2)));LinearLayout.LayoutParams rp=new LinearLayout.LayoutParams(dp(4),dp(38));rp.setMargins(0,0,dp(12),0);row.addView(rail,rp);LinearLayout txt=new LinearLayout(this);txt.setOrientation(LinearLayout.VERTICAL);TextView t1=new TextView(this);t1.setText(a);t1.setTextSize(15);t1.setTextColor(textColor());t1.setTypeface(android.graphics.Typeface.create("sans-serif-medium",android.graphics.Typeface.BOLD));TextView t2=new TextView(this);t2.setText(b);t2.setTextSize(12);t2.setTextColor(mutedColor());t2.setPadding(0,dp(4),0,0);txt.addView(t1);txt.addView(t2);row.addView(txt,new LinearLayout.LayoutParams(0,ViewGroup.LayoutParams.WRAP_CONTENT,1));if(badge!=null&&!badge.isEmpty()){TextView x=badgeView(badge);row.addView(x);}c.addView(row);return c;}
-    private TextView badgeView(String text){String l=text.toLowerCase(Locale.US);int fg=brandTextColor(),bg=paleAccent(),stroke=paleAccentBorder();if(l.contains("completed")){fg=isNight()?0xFF86D8AD:0xFF287451;bg=isNight()?0xFF20382C:0xFFE9F6EF;stroke=isNight()?0xFF315A42:0xFFCBE8D8;}else if(l.contains("cancel")||l.contains("overdue")||l.contains("urgent")){fg=isNight()?0xFFFFA8A4:0xFFA63D38;bg=isNight()?0xFF422725:0xFFFFEEEE;stroke=isNight()?0xFF69403C:0xFFF3CAC7;}else if(l.contains("progress")||l.contains("due")||l.contains("pro")||l.contains("pdf")){fg=ACCENT;bg=paleAccent();stroke=paleAccentBorder();}TextView x=new TextView(this);x.setText(text);x.setTextSize(10);x.setTextColor(fg);x.setTypeface(android.graphics.Typeface.create("sans-serif-medium",android.graphics.Typeface.BOLD));x.setGravity(Gravity.CENTER);x.setPadding(dp(9),dp(5),dp(9),dp(5));x.setBackground(rounded(bg,stroke,dp(1),dp(14)));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,ViewGroup.LayoutParams.WRAP_CONTENT);p.setMargins(dp(10),0,0,0);x.setLayoutParams(p);return x;}
+    private MaterialCardView stat(String label,long value){MaterialCardView c=new MaterialCardView(this);c.setMinimumHeight(dp(102));c.setCardBackgroundColor(surface());c.setRadius(dp(22));c.setCardElevation(dp(1));c.setStrokeColor(borderColor());c.setStrokeWidth(dp(1));LinearLayout l=new LinearLayout(this);l.setOrientation(LinearLayout.VERTICAL);l.setGravity(Gravity.CENTER_VERTICAL);l.setPadding(dp(16),dp(14),dp(16),dp(13));LinearLayout top=new LinearLayout(this);top.setGravity(Gravity.CENTER_VERTICAL);View dot=new View(this);dot.setBackground(rounded(ACCENT,0,0,dp(6)));top.addView(dot,new LinearLayout.LayoutParams(dp(9),dp(9)));TextView lab=new TextView(this);lab.setText(label);lab.setTextSize(11);lab.setTextColor(mutedColor());lab.setPadding(dp(7),0,0,0);top.addView(lab);TextView n=new TextView(this);n.setText(String.valueOf(value));n.setTextSize(29);n.setTextColor(textColor());n.setTypeface(android.graphics.Typeface.create("sans-serif",android.graphics.Typeface.BOLD));n.setPadding(0,dp(6),0,0);l.addView(top);l.addView(n);c.addView(l);return c;}
+    private MaterialCardView rowCard(String a,String b,String badge){MaterialCardView c=new MaterialCardView(this);c.setCardBackgroundColor(surface());c.setRadius(dp(20));c.setStrokeColor(borderColor());c.setStrokeWidth(dp(1));c.setCardElevation(dp(1));c.setClickable(true);c.setFocusable(true);c.setRippleColor(ColorStateList.valueOf(isNight()?0x22F99D1C:0x12F99D1C));LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT);cp.setMargins(0,dp(6),0,dp(6));c.setLayoutParams(cp);LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.HORIZONTAL);row.setGravity(Gravity.CENTER_VERTICAL);row.setPadding(dp(16),dp(14),dp(14),dp(14));View rail=new View(this);rail.setBackground(rounded(paleAccentBorder(),0,0,dp(2)));LinearLayout.LayoutParams rp=new LinearLayout.LayoutParams(dp(4),dp(38));rp.setMargins(0,0,dp(12),0);row.addView(rail,rp);LinearLayout txt=new LinearLayout(this);txt.setOrientation(LinearLayout.VERTICAL);TextView t1=new TextView(this);t1.setText(a);t1.setTextSize(15);t1.setTextColor(textColor());t1.setTypeface(android.graphics.Typeface.create("sans-serif-medium",android.graphics.Typeface.BOLD));TextView t2=new TextView(this);t2.setText(b);t2.setTextSize(12);t2.setTextColor(mutedColor());t2.setPadding(0,dp(4),0,0);txt.addView(t1);txt.addView(t2);row.addView(txt,new LinearLayout.LayoutParams(0,ViewGroup.LayoutParams.WRAP_CONTENT,1));if("›".equals(badge)){row.addView(badgeView(badge));}else if(badge!=null&&!badge.isEmpty()){TextView x=badgeView(badge);LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,ViewGroup.LayoutParams.WRAP_CONTENT);bp.setMargins(0,dp(8),0,0);x.setLayoutParams(bp);txt.addView(x);}c.addView(row);return c;}
+    private TextView badgeView(String text){String l=text.toLowerCase(Locale.US);int fg=brandTextColor(),bg=paleAccent(),stroke=paleAccentBorder();if(l.contains("completed")){fg=isNight()?0xFF86D8AD:0xFF287451;bg=isNight()?0xFF20382C:0xFFE9F6EF;stroke=isNight()?0xFF315A42:0xFFCBE8D8;}else if(l.contains("cancel")||l.contains("overdue")||l.contains("urgent")){fg=isNight()?0xFFFFA8A4:0xFFA63D38;bg=isNight()?0xFF422725:0xFFFFEEEE;stroke=isNight()?0xFF69403C:0xFFF3CAC7;}else if(l.contains("progress")||l.contains("due")||l.contains("pro")||l.contains("pdf")){fg=brandTextColor();bg=paleAccent();stroke=paleAccentBorder();}TextView x=new TextView(this);x.setText(text);x.setTextSize(10);x.setTextColor(fg);x.setTypeface(android.graphics.Typeface.create("sans-serif-medium",android.graphics.Typeface.BOLD));x.setGravity(Gravity.CENTER);x.setPadding(dp(9),dp(5),dp(9),dp(5));x.setBackground(rounded(bg,stroke,dp(1),dp(14)));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,ViewGroup.LayoutParams.WRAP_CONTENT);p.setMargins(dp(10),0,0,0);x.setLayoutParams(p);return x;}
     private MaterialCardView menuCard(String a,String b,View.OnClickListener l){MaterialCardView c=rowCard(a,b,"›");c.setOnClickListener(l);return c;}
     private View info(String label,String value){LinearLayout l=new LinearLayout(this);l.setOrientation(LinearLayout.VERTICAL);l.setPadding(dp(2),dp(5),dp(2),dp(8));TextView a=new TextView(this);a.setText(label.toUpperCase(Locale.US));a.setLetterSpacing(0.06f);a.setTextSize(10);a.setTextColor(mutedColor());a.setTypeface(android.graphics.Typeface.create("sans-serif-medium",android.graphics.Typeface.BOLD));TextView v=new TextView(this);v.setText(value==null||value.isEmpty()?"—":value);v.setTextSize(14);v.setTextColor(textColor());v.setPadding(0,dp(3),0,0);l.addView(a);l.addView(v);return l;}
     private GradientDrawable rounded(int fill,int stroke,int strokeWidth,int radius){GradientDrawable g=new GradientDrawable();g.setColor(fill);g.setCornerRadius(radius);if(strokeWidth>0)g.setStroke(strokeWidth,stroke);return g;}

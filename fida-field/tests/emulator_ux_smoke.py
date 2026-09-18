@@ -45,6 +45,11 @@ def tap(text,scroll=False):
     shell('input','tap',str((x1+x2)//2),str((y1+y2)//2))
     time.sleep(.4)
 
+def hide_keyboard():
+    state=shell('dumpsys','input_method')
+    if re.search(r'(?:mInputShown|mIsInputViewShown|isInputViewShown)=true',state):
+        shell('input','keyevent','4')
+
 def expect(text):
     find(text)
     checks.append(text)
@@ -104,16 +109,18 @@ def main():
     assert not any(n.get('text','').startswith('UX-4') for n in tree().iter('node'))
     tap('More filters');expect('Hide filters');tap('Hide filters');expect('More filters')
     tap('Search jobs');shell('input','text','Pump');shell('input','keyevent','66');time.sleep(.5)
-    tap('Jobs');expect('Pump');expect('1 job');shot('04-job-search')
+    hide_keyboard();tap('Jobs');expect('Pump');expect('3 jobs')
+    tap('Clear search jobs');tap('Search jobs');shell('input','text','inspection');hide_keyboard()
+    expect('inspection');expect('1 job');shot('04-job-search')
     tap('UX-1 · Pump inspection',scroll=True);expect('UX-1');shot('05-job-detail')
-    shell('input','keyevent','4');expect('Pump');expect('1 job')
+    shell('input','keyevent','4');expect('inspection');expect('1 job')
     tap('Customers');expect('Search customers & sites')
-    tap('Search customers & sites');shell('input','text','Kigali');shell('input','keyevent','4')
+    tap('Search customers & sites');shell('input','text','Kigali');hide_keyboard()
     tap('Assets');tap('Customers');expect('Kigali');shot('06-customers')
-    tap('Assets');tap('Search assets, tags & serials');shell('input','text','PUMP');shell('input','keyevent','4')
+    tap('Assets');tap('Search assets, tags & serials');shell('input','text','PUMP');hide_keyboard()
     tap('Jobs');tap('Assets');expect('PUMP');shot('07-assets')
     tap('Jobs');tap('Clear search & filters');expect('5 jobs')
-    tap('Search jobs');shell('input','text','NoSuchJob');shell('input','keyevent','4')
+    tap('Search jobs');shell('input','text','NoSuchJob');hide_keyboard()
     expect('No jobs match this view. Try another search or clear the filters.')
     tap('Clear search jobs');expect('5 jobs')
     prefs('Technician');launch();expect('My active jobs');tap('In progress');expect('1 job');expect('In Progress');shot('08-technician-in-progress')

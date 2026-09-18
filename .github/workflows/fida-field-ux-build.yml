@@ -1,0 +1,78 @@
+name: Fida Field UX Test APK
+
+on:
+  push:
+    branches: [ux/field-workflow-review]
+    paths:
+      - 'fida-field/**'
+      - '.github/workflows/fida-field-ux-build.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fida-field-ux-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Install Android API 36
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+          "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0"
+      - name: Restore existing signing identity
+        run: |
+          set -euo pipefail
+          cat .fida-signing/fida-field-test.part* | tr -d '\n' | base64 -d > fida-field/app/fida-test.keystore
+          echo 'd407757a25505be46048d30b3b19b85a4abb9b0bf14475b2368e0f2e7e9bac51  fida-field/app/fida-test.keystore' | sha256sum -c -
+      - name: Check job filtering and role scope
+        run: python3 fida-field/tests/check_job_filters.py
+      - name: Android lint, unit-test task and APK build
+        working-directory: fida-field
+        env:
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$SUPABASE_PUBLISHABLE_KEY"
+          gradle :app:lintDebug :app:testDebugUnitTest :app:assembleDebug -PFIDA_OPEN_EDITION=true --stacktrace
+      - name: Verify and package test APK
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          cp fida-field/app/build/outputs/apk/debug/app-debug.apk artifacts/Fida-Field-1.0.2-ux1-open.apk
+          unzip -t artifacts/Fida-Field-1.0.2-ux1-open.apk >/dev/null
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs artifacts/Fida-Field-1.0.2-ux1-open.apk > artifacts/signature.txt
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging artifacts/Fida-Field-1.0.2-ux1-open.apk > artifacts/package-info.txt
+          cd artifacts
+          sha256sum Fida-Field-1.0.2-ux1-open.apk > SHA256SUMS.txt
+          printf 'Source commit: %s\nEdition: Open Edition UX test\nAndroid lint: PASS\nQuery regression checks: PASS (9)\nAPK signature verification: PASS\nDevice and visual testing: PENDING\n' "$GITHUB_SHA" > validation.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Fida-Field-1.0.2-ux1-open
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload Android check reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Fida-Field-UX-check-reports
+          path: |
+            fida-field/app/build/reports/
+            fida-field/app/build/test-results/
+          if-no-files-found: ignore
+          retention-days: 14
